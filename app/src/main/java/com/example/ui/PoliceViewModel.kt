@@ -61,6 +61,31 @@ data class MonthlyVehicleSummary(
     val currentRemainingFuel: Double = 0.0
 )
 
+data class DailyDutySummary(
+    val dateKey: String, // "YYYY-MM-DD"
+    val formattedDate: String, // "2026-11-09 • සඳුදා (Mon)"
+    val onDutyRecord: DutyRecord?,
+    val offDutyRecord: DutyRecord?,
+    val extraDutyRecords: List<DutyRecord>,
+    val allRecords: List<DutyRecord>,
+    val totalDutyMinutes: Long,
+    val totalHoursFormatted: String,
+    val isOngoing: Boolean,
+    val totalPhotosCount: Int
+)
+
+data class DailyMessSummary(
+    val dateKey: String, // "YYYY-MM-DD"
+    val formattedDate: String, // "2026-11-09 • සඳුදා (Mon)"
+    val breakfast: MessRecord?,
+    val lunch: MessRecord?,
+    val dinner: MessRecord?,
+    val allRecords: List<MessRecord>,
+    val takenCount: Int,
+    val totalPhotosCount: Int,
+    val isCurrentDay: Boolean
+)
+
 class PoliceViewModel(private val repository: PoliceRepository) : ViewModel() {
 
     // --- Officer Profile ---

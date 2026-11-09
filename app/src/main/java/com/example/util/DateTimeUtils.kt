@@ -55,4 +55,32 @@ object DateTimeUtils {
         val minutes = totalMinutes % 60
         return "${hours}h ${minutes}m"
     }
+
+    fun getDayOfWeekSinhala(timestamp: Long): String {
+        val cal = java.util.Calendar.getInstance().apply { timeInMillis = timestamp }
+        return when (cal.get(java.util.Calendar.DAY_OF_WEEK)) {
+            java.util.Calendar.SUNDAY -> "ඉරිදා (Sun)"
+            java.util.Calendar.MONDAY -> "සඳුදා (Mon)"
+            java.util.Calendar.TUESDAY -> "අඟහරුවාදා (Tue)"
+            java.util.Calendar.WEDNESDAY -> "බදාදා (Wed)"
+            java.util.Calendar.THURSDAY -> "බ්‍රහස්පතින්දා (Thu)"
+            java.util.Calendar.FRIDAY -> "සිකුරාදා (Fri)"
+            java.util.Calendar.SATURDAY -> "සෙනසුරාදා (Sat)"
+            else -> ""
+        }
+    }
+
+    fun formatSinhalaDisplayDate(dateKey: String): String {
+        return try {
+            val date = dateFormat.parse(dateKey)
+            if (date != null) {
+                val dayName = getDayOfWeekSinhala(date.time)
+                "$dateKey • $dayName"
+            } else {
+                dateKey
+            }
+        } catch (e: Exception) {
+            dateKey
+        }
+    }
 }
