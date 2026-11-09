@@ -360,7 +360,7 @@ fun MainPoliceApp(viewModel: PoliceViewModel) {
         DutyEntryDialog(
             initialType = dutyDialogInitialType,
             onDismiss = { isDutyDialogOpen = false },
-            onSubmit = { type, timestamp, page, paragraph, nature, remarks, photoUri ->
+            onSubmit = { type, timestamp, page, paragraph, nature, remarks, photoUri, scenePhotoUri, durationMinutes ->
                 viewModel.submitDutyReport(
                     context = context,
                     type = type,
@@ -370,6 +370,8 @@ fun MainPoliceApp(viewModel: PoliceViewModel) {
                     dutyNature = nature,
                     remarks = remarks,
                     photoUri = photoUri,
+                    scenePhotoUri = scenePhotoUri,
+                    dutyDurationMinutes = durationMinutes,
                     onSuccess = {
                         isDutyDialogOpen = false
                     }

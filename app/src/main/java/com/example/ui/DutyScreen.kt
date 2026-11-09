@@ -20,7 +20,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AccessTime
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Compress
 import androidx.compose.material.icons.filled.Delete
@@ -75,6 +77,8 @@ fun DutyScreen(
     val dutyList by viewModel.filteredDutyRecords.collectAsStateWithLifecycle()
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
     val dutyFilter by viewModel.dutyFilter.collectAsStateWithLifecycle()
+    val todayDutyHours by viewModel.todayDutyHoursFormatted.collectAsStateWithLifecycle()
+    val monthlyDutyHours by viewModel.monthlyDutyHoursFormatted.collectAsStateWithLifecycle()
 
     var recordToDelete by remember { mutableStateOf<DutyRecord?>(null) }
 
@@ -104,6 +108,67 @@ fun DutyScreen(
                 .padding(innerPadding)
                 .padding(horizontal = 16.dp)
         ) {
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Duty Hours Counter Card
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(32.dp)
+                                .background(DutyActiveGreen.copy(alpha = 0.15f), CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.AccessTime,
+                                contentDescription = null,
+                                tint = DutyActiveGreen,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column {
+                            Text(
+                                text = "අද රාජකාරි කාලය",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                text = todayDutyHours,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = DutyActiveGreen
+                            )
+                        }
+                    }
+
+                    Column(horizontalAlignment = Alignment.End) {
+                        Text(
+                            text = "මෙම මස එකතුව",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = monthlyDutyHours,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+            }
+
             Spacer(modifier = Modifier.height(8.dp))
 
             // Search Bar
@@ -373,6 +438,34 @@ fun DutyItemCard(
                         }
                     }
                 }
+
+                if (record.dutyDurationMinutes > 0) {
+                    val hrs = record.dutyDurationMinutes / 60
+                    val mins = record.dutyDurationMinutes % 60
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = DutyActiveGreen.copy(alpha = 0.15f)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.AccessTime,
+                                contentDescription = null,
+                                tint = DutyActiveGreen,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "කාලය: ${hrs}h ${mins}m",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = DutyActiveGreen
+                            )
+                        }
+                    }
+                }
             }
 
             if (record.remarks.isNotBlank()) {
@@ -384,9 +477,9 @@ fun DutyItemCard(
                 )
             }
 
-            // Photo preview section
+            // 1. IB Photo preview section
             if (!record.photoPath.isNullOrBlank()) {
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(10.dp))
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -407,15 +500,15 @@ fun DutyItemCard(
                         painter = rememberAsyncImagePainter(model = File(record.photoPath)),
                         contentDescription = "Duty Book Page Photo",
                         modifier = Modifier
-                            .size(54.dp)
+                            .size(50.dp)
                             .clip(RoundedCornerShape(8.dp)),
                         contentScale = ContentScale.Crop
                     )
-                    Spacer(modifier = Modifier.width(12.dp))
+                    Spacer(modifier = Modifier.width(10.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = "පොතේ පිටුවේ ඡායාරූපය (IB Photo)",
-                            fontSize = 13.sp,
+                            fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold,
                             color = MaterialTheme.colorScheme.onSurface
                         )
@@ -425,7 +518,7 @@ fun DutyItemCard(
                                 imageVector = Icons.Default.Compress,
                                 contentDescription = null,
                                 tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(14.dp)
+                                modifier = Modifier.size(13.dp)
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(
@@ -440,6 +533,66 @@ fun DutyItemCard(
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+
+            // 2. Incident / Scene Photo preview section
+            if (!record.scenePhotoPath.isNullOrBlank()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(BadgeGold.copy(alpha = 0.12f))
+                        .clickable {
+                            onViewPhoto(
+                                record.scenePhotoPath,
+                                "සිද්ධිය / ස්ථානය: ${record.dutyNature}",
+                                record.compressedSizeKb,
+                                record.originalSizeKb
+                            )
+                        }
+                        .padding(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Image(
+                        painter = rememberAsyncImagePainter(model = File(record.scenePhotoPath)),
+                        contentDescription = "Incident / Scene Photo",
+                        modifier = Modifier
+                            .size(50.dp)
+                            .clip(RoundedCornerShape(8.dp)),
+                        contentScale = ContentScale.Crop
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "සිද්ධියේ / ස්ථානයේ ඡායාරූපය (Scene Photo)",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.CameraAlt,
+                                contentDescription = null,
+                                tint = BadgeGold,
+                                modifier = Modifier.size(13.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "ස්ථානීය සාක්ෂි ඡායාරූපය",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    Text(
+                        text = "බලන්න >",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = BadgeGold
                     )
                 }
             }

@@ -22,6 +22,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Badge
 import androidx.compose.material.icons.filled.Bedtime
+import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Compress
@@ -85,6 +86,9 @@ fun DashboardScreen(
     val todayMeals by viewModel.selectedDayMeals.collectAsStateWithLifecycle()
     val storageStats by viewModel.storageStats.collectAsStateWithLifecycle()
     val recentDuties by viewModel.filteredDutyRecords.collectAsStateWithLifecycle()
+
+    val todayDutyHours by viewModel.todayDutyHoursFormatted.collectAsStateWithLifecycle()
+    val monthlyDutyHours by viewModel.monthlyDutyHoursFormatted.collectAsStateWithLifecycle()
 
     val isOnDuty = latestDuty?.type == "ON_DUTY"
 
@@ -158,6 +162,8 @@ fun DashboardScreen(
             DutyStatusHeroCard(
                 latestDuty = latestDuty,
                 isOnDuty = isOnDuty,
+                todayDutyHours = todayDutyHours,
+                monthlyDutyHours = monthlyDutyHours,
                 onReportOnDuty = { onOpenDutyDialog("ON_DUTY") },
                 onReportOffDuty = { onOpenDutyDialog("OFF_DUTY") },
                 onViewPhoto = onViewPhoto
@@ -350,6 +356,8 @@ fun OfficerHeaderCard(
 fun DutyStatusHeroCard(
     latestDuty: DutyRecord?,
     isOnDuty: Boolean,
+    todayDutyHours: String = "",
+    monthlyDutyHours: String = "",
     onReportOnDuty: () -> Unit,
     onReportOffDuty: () -> Unit,
     onViewPhoto: (path: String, title: String, compKb: Int, origKb: Int) -> Unit
@@ -414,7 +422,38 @@ fun DutyStatusHeroCard(
                 }
             }
 
-            Spacer(modifier = Modifier.height(14.dp))
+            // Duty Hours Summary Indicator
+            if (todayDutyHours.isNotBlank()) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "⏱️ අද කාලය: $todayDutyHours",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = DutyActiveGreen
+                        )
+                        if (monthlyDutyHours.isNotBlank()) {
+                            Text(
+                                text = "🗓️ මස: $monthlyDutyHours",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
 
             if (isOnDuty && latestDuty != null) {
                 // On duty details
@@ -480,6 +519,39 @@ fun DutyStatusHeroCard(
                             text = "පොතේ පිටුවේ ඡායාරූපය (${latestDuty.compressedSizeKb} KB - Auto Compressed)",
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+
+                if (!latestDuty.scenePhotoPath.isNullOrBlank()) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(BadgeGold.copy(alpha = 0.12f))
+                            .clickable {
+                                onViewPhoto(
+                                    latestDuty.scenePhotoPath,
+                                    "සිද්ධිය / ස්ථානය: ${latestDuty.dutyNature}",
+                                    latestDuty.compressedSizeKb,
+                                    latestDuty.originalSizeKb
+                                )
+                            }
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CameraAlt,
+                            contentDescription = null,
+                            tint = BadgeGold,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "සිද්ධියේ / ස්ථානයේ ඡායාරූපය (Scene Photo)",
+                            fontSize = 12.sp,
+                            color = BadgeGold,
                             fontWeight = FontWeight.Medium
                         )
                     }

@@ -36,11 +36,17 @@ class ExampleUnitTest {
       ibPage = "142",
       ibParagraph = "05",
       dutyNature = "Station Reserve",
+      photoPath = "/path/to/ib_photo.jpg",
+      scenePhotoPath = "/path/to/scene_photo.jpg",
+      dutyDurationMinutes = 480L,
       compressedSizeKb = 120
     )
     assertEquals("ON_DUTY", duty.type)
     assertEquals("142", duty.ibPage)
     assertEquals("05", duty.ibParagraph)
+    assertEquals("/path/to/ib_photo.jpg", duty.photoPath)
+    assertEquals("/path/to/scene_photo.jpg", duty.scenePhotoPath)
+    assertEquals(480L, duty.dutyDurationMinutes)
     assertEquals(120, duty.compressedSizeKb)
   }
 

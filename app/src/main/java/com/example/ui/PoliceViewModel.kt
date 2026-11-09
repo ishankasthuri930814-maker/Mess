@@ -24,6 +24,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -90,6 +91,31 @@ class PoliceViewModel(private val repository: PoliceRepository) : ViewModel() {
 
     val latestDutyRecord: StateFlow<DutyRecord?> = repository.latestDutyRecord
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    val allDutyRecords: StateFlow<List<DutyRecord>> = repository.allDutyRecords
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val todayDutyMinutes: StateFlow<Long> = allDutyRecords.map { records ->
+        calculateDutyMinutesForDate(records, DateTimeUtils.getTodayKey())
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0L)
+
+    val todayDutyHoursFormatted: StateFlow<String> = todayDutyMinutes.map { mins ->
+        formatHoursMinutesSinhala(mins)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "0 පැය 0 මිනි")
+
+    val monthlyDutyHoursFormatted: StateFlow<String> = allDutyRecords.map { records ->
+        val monthKey = DateTimeUtils.getCurrentMonthKey()
+        val monthRecords = records.filter {
+            val dateKey = DateTimeUtils.formatDate(it.timestamp)
+            dateKey.startsWith(monthKey)
+        }
+        val recordsByDay = monthRecords.groupBy { DateTimeUtils.formatDate(it.timestamp) }
+        var totalMins = 0L
+        for ((dayKey, dayRecs) in recordsByDay) {
+            totalMins += calculateDutyMinutesForDate(dayRecs, dayKey)
+        }
+        formatHoursMinutesSinhala(totalMins)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "0 පැය 0 මිනි")
 
     // --- Mess Records ---
     private val _selectedMessDate = MutableStateFlow(DateTimeUtils.getTodayKey())
@@ -245,7 +271,7 @@ class PoliceViewModel(private val repository: PoliceRepository) : ViewModel() {
         }
     }
 
-    // Submit duty with custom timestamp (user selected date and time)
+    // Submit duty with custom timestamp (user selected date and time), dual photos, and duration
     fun submitDutyReport(
         context: Context,
         type: String, // "ON_DUTY" or "OFF_DUTY"
@@ -255,19 +281,33 @@ class PoliceViewModel(private val repository: PoliceRepository) : ViewModel() {
         dutyNature: String,
         remarks: String,
         photoUri: Uri?,
+        scenePhotoUri: Uri? = null,
+        dutyDurationMinutes: Long = 0L,
         onSuccess: () -> Unit
     ) {
         viewModelScope.launch {
             var photoPath: String? = null
+            var scenePhotoPath: String? = null
             var origKb = 0
             var compKb = 0
 
+            // 1. Information book photo
             if (photoUri != null) {
-                val compression = ImageCompressor.compressAndSave(context, photoUri, prefix = "duty")
+                val compression = ImageCompressor.compressAndSave(context, photoUri, prefix = "duty_ib")
                 if (compression != null) {
                     photoPath = compression.filePath
-                    origKb = compression.originalSizeKb
-                    compKb = compression.compressedSizeKb
+                    origKb += compression.originalSizeKb
+                    compKb += compression.compressedSizeKb
+                }
+            }
+
+            // 2. Incident / Scene photo (සිද්ධියේ හෝ ස්ථානයේ ඡායාරූපය)
+            if (scenePhotoUri != null) {
+                val sceneCompression = ImageCompressor.compressAndSave(context, scenePhotoUri, prefix = "duty_scene")
+                if (sceneCompression != null) {
+                    scenePhotoPath = sceneCompression.filePath
+                    origKb += sceneCompression.originalSizeKb
+                    compKb += sceneCompression.compressedSizeKb
                 }
             }
 
@@ -279,20 +319,62 @@ class PoliceViewModel(private val repository: PoliceRepository) : ViewModel() {
                 dutyNature = dutyNature.trim(),
                 remarks = remarks.trim(),
                 photoPath = photoPath,
+                scenePhotoPath = scenePhotoPath,
+                dutyDurationMinutes = dutyDurationMinutes,
                 originalSizeKb = origKb,
                 compressedSizeKb = compKb
             )
             repository.insertDutyRecord(record)
 
+            val photoCount = (if (photoPath != null) 1 else 0) + (if (scenePhotoPath != null) 1 else 0)
             val msg = if (type == "ON_DUTY") {
-                if (compKb > 0) "රාජකාරිය වාර්තා විය! ඡායාරූපය ${compKb}KB දක්වා සම්පීඩනය විය."
+                if (photoCount > 0) "රාජකාරිය වාර්තා විය! (ඡායාරූප $photoCount ක් සුරැකිණි - ${compKb}KB)"
                 else "රාජකාරිය සාර්ථකව වාර්තා විය!"
             } else {
-                if (compKb > 0) "බැහැරවීම සටහන් විය! ඡායාරූපය ${compKb}KB දක්වා සම්පීඩනය විය."
+                if (photoCount > 0) "බැහැරවීම සටහන් විය! (ඡායාරූප $photoCount ක් සුරැකිණි - ${compKb}KB)"
                 else "බැහැරවීම සාර්ථකව සටහන් විය!"
             }
             _userMessage.emit(msg)
             onSuccess()
+        }
+    }
+
+    private fun calculateDutyMinutesForDate(dayRecords: List<DutyRecord>, targetDateKey: String): Long {
+        if (dayRecords.isEmpty()) return 0L
+        var explicitSum = 0L
+        for (r in dayRecords) {
+            if (r.dutyDurationMinutes > 0) {
+                explicitSum += r.dutyDurationMinutes
+            }
+        }
+        if (explicitSum > 0) return explicitSum
+
+        val sorted = dayRecords.sortedBy { it.timestamp }
+        var totalMillis = 0L
+        var lastOnDuty: Long? = null
+        for (r in sorted) {
+            if (r.type == "ON_DUTY") {
+                lastOnDuty = r.timestamp
+            } else if (r.type == "OFF_DUTY" && lastOnDuty != null) {
+                val diff = r.timestamp - lastOnDuty
+                if (diff > 0) totalMillis += diff
+                lastOnDuty = null
+            }
+        }
+        if (lastOnDuty != null && targetDateKey == DateTimeUtils.getTodayKey()) {
+            val ongoing = System.currentTimeMillis() - lastOnDuty
+            if (ongoing in 1..86400000) totalMillis += ongoing
+        }
+        return totalMillis / (1000 * 60)
+    }
+
+    private fun formatHoursMinutesSinhala(totalMinutes: Long): String {
+        val hours = totalMinutes / 60
+        val mins = totalMinutes % 60
+        return if (hours > 0) {
+            "${hours}h ${mins}m (${hours} පැය ${mins} මිනි)"
+        } else {
+            "${mins}m (${mins} මිනි)"
         }
     }
 

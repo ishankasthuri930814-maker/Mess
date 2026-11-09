@@ -12,7 +12,9 @@ data class DutyRecord(
     val ibParagraph: String, // Paragraph
     val dutyNature: String, // Nature of duty
     val remarks: String = "",
-    val photoPath: String? = null,
+    val photoPath: String? = null, // Information book page photo
+    val scenePhotoPath: String? = null, // Incident / Scene photo (සිද්ධියේ හෝ ස්ථානයේ ඡායාරූපය)
+    val dutyDurationMinutes: Long = 0L, // Shift duration in minutes
     val originalSizeKb: Int = 0,
     val compressedSizeKb: Int = 0
 )

@@ -43,6 +43,14 @@ class PoliceRepository(private val dao: PoliceDao) {
                 e.printStackTrace()
             }
         }
+        record.scenePhotoPath?.let { path ->
+            try {
+                val file = File(path)
+                if (file.exists()) file.delete()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
         dao.deleteDutyRecord(record.id)
     }
 

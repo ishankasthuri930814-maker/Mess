@@ -20,11 +20,16 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -40,7 +45,9 @@ import androidx.compose.material.icons.filled.Compress
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Done
 import androidx.compose.material.icons.filled.MenuBook
+import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -57,6 +64,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -76,6 +84,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import coil.compose.rememberAsyncImagePainter
+import com.example.ui.theme.BadgeGold
 import com.example.ui.theme.DutyActiveGreen
 import com.example.ui.theme.DutyOffOrange
 import java.io.File
@@ -88,7 +97,17 @@ import java.util.Locale
 fun DutyEntryDialog(
     initialType: String = "ON_DUTY",
     onDismiss: () -> Unit,
-    onSubmit: (type: String, timestamp: Long, page: String, paragraph: String, nature: String, remarks: String, photoUri: Uri?) -> Unit
+    onSubmit: (
+        type: String,
+        timestamp: Long,
+        page: String,
+        paragraph: String,
+        nature: String,
+        remarks: String,
+        photoUri: Uri?,
+        scenePhotoUri: Uri?,
+        dutyDurationMinutes: Long
+    ) -> Unit
 ) {
     val context = LocalContext.current
     var dutyType by remember { mutableStateOf(initialType) }
@@ -105,8 +124,19 @@ fun DutyEntryDialog(
     var ibParagraph by remember { mutableStateOf("") }
     var dutyNature by remember { mutableStateOf(if (initialType == "ON_DUTY") "Station Reserve" else "Off Duty") }
     var remarks by remember { mutableStateOf("") }
-    var selectedPhotoUri by remember { mutableStateOf<Uri?>(null) }
-    var cameraPhotoUri by remember { mutableStateOf<Uri?>(null) }
+
+    // Shift duration in hours & minutes (e.g. 8h 30m)
+    var durationHours by remember { mutableIntStateOf(if (initialType == "OFF_DUTY") 8 else 0) }
+    var durationMinutes by remember { mutableIntStateOf(0) }
+
+    // 1. IB Page Photo
+    var ibPhotoUri by remember { mutableStateOf<Uri?>(null) }
+    var tempIbCameraUri by remember { mutableStateOf<Uri?>(null) }
+
+    // 2. Incident / Scene Photo
+    var scenePhotoUri by remember { mutableStateOf<Uri?>(null) }
+    var tempSceneCameraUri by remember { mutableStateOf<Uri?>(null) }
+
     var isSubmitting by remember { mutableStateOf(false) }
 
     // DatePicker Dialog
@@ -136,6 +166,47 @@ fun DutyEntryDialog(
         true
     )
 
+    // IB Photo Pickers
+    val ibGalleryLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri: Uri? -> if (uri != null) ibPhotoUri = uri }
+
+    val ibCameraLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.TakePicture()
+    ) { success: Boolean -> if (success && tempIbCameraUri != null) ibPhotoUri = tempIbCameraUri }
+
+    // Scene Photo Pickers
+    val sceneGalleryLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri: Uri? -> if (uri != null) scenePhotoUri = uri }
+
+    val sceneCameraLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.TakePicture()
+    ) { success: Boolean -> if (success && tempSceneCameraUri != null) scenePhotoUri = tempSceneCameraUri }
+
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted: Boolean ->
+        if (!isGranted) {
+            Toast.makeText(context, "කැමරා අවසරය ලබාදෙන්න (Camera permission needed)", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    fun launchCameraFor(isScene: Boolean) {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+            val uri = createTempImageUri(context, if (isScene) "scene" else "ib")
+            if (isScene) {
+                tempSceneCameraUri = uri
+                sceneCameraLauncher.launch(uri)
+            } else {
+                tempIbCameraUri = uri
+                ibCameraLauncher.launch(uri)
+            }
+        } else {
+            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+        }
+    }
+
     // Common duty quick selections
     val dutySuggestions = if (dutyType == "ON_DUTY") {
         listOf(
@@ -146,7 +217,7 @@ fun DutyEntryDialog(
             "Court Duty (උසාවි රාජකාරි)",
             "VIP Security (විශේෂ ආරක්ෂක)",
             "Check Point (මාර්ග බාධක)",
-            "Crime Duty (අපරාධ විමර්ශන)"
+            "Raid / Investigation (වැටලීම්)"
         )
     } else {
         listOf(
@@ -157,414 +228,445 @@ fun DutyEntryDialog(
         )
     }
 
-    // Photo pickers
-    val galleryLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.PickVisualMedia()
-    ) { uri: Uri? ->
-        if (uri != null) {
-            selectedPhotoUri = uri
-        }
-    }
-
-    val cameraLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.TakePicture()
-    ) { success: Boolean ->
-        if (success && cameraPhotoUri != null) {
-            selectedPhotoUri = cameraPhotoUri
-        }
-    }
-
-    val cameraPermissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
-    ) { isGranted: Boolean ->
-        if (isGranted) {
-            val uri = createTempImageUri(context)
-            cameraPhotoUri = uri
-            cameraLauncher.launch(uri)
-        } else {
-            Toast.makeText(context, "කැමරා අවසරය අවශ්‍ය වේ (Camera permission required)", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    fun launchCamera() {
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-            val uri = createTempImageUri(context)
-            cameraPhotoUri = uri
-            cameraLauncher.launch(uri)
-        } else {
-            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
-        }
-    }
-
     Dialog(
         onDismissRequest = { if (!isSubmitting) onDismiss() },
-        properties = DialogProperties(usePlatformDefaultWidth = false)
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false
+        )
     ) {
-        Surface(
+        Box(
             modifier = Modifier
-                .fillMaxWidth(0.95f)
-                .clip(RoundedCornerShape(24.dp)),
-            color = MaterialTheme.colorScheme.surface,
-            tonalElevation = 8.dp
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.55f))
+                .statusBarsPadding()
+                .navigationBarsPadding()
+                .imePadding(),
+            contentAlignment = Alignment.Center
         ) {
-            Column(
+            Surface(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(20.dp)
-                    .verticalScroll(rememberScrollState())
+                    .fillMaxWidth(0.96f)
+                    .widthIn(max = 520.dp)
+                    .clip(RoundedCornerShape(18.dp)),
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 8.dp
             ) {
-                // Header
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(14.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    // Header
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .background(
+                                    color = if (dutyType == "ON_DUTY") DutyActiveGreen.copy(alpha = 0.15f)
+                                    else DutyOffOrange.copy(alpha = 0.15f),
+                                    shape = CircleShape
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = if (dutyType == "ON_DUTY") Icons.Default.Security else Icons.Default.MenuBook,
+                                contentDescription = null,
+                                tint = if (dutyType == "ON_DUTY") DutyActiveGreen else DutyOffOrange,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = if (dutyType == "ON_DUTY") "රාජකාරි වාර්තා කිරීම" else "බැහැරවීම සටහන් කිරීම",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 15.sp,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = if (dutyType == "ON_DUTY") "On Duty Report" else "Off Duty Report",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        IconButton(onClick = onDismiss, enabled = !isSubmitting, modifier = Modifier.size(32.dp)) {
+                            Icon(imageVector = Icons.Default.Close, contentDescription = "Close", modifier = Modifier.size(18.dp))
+                        }
+                    }
+
+                    // Type Toggle (On Duty / Off Duty)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(10.dp))
+                            .padding(2.dp),
+                        horizontalArrangement = Arrangement.spacedBy(3.dp)
+                    ) {
+                        val isOn = dutyType == "ON_DUTY"
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (isOn) DutyActiveGreen else Color.Transparent)
+                                .clickable {
+                                    dutyType = "ON_DUTY"
+                                    dutyNature = "Station Reserve"
+                                }
+                                .padding(vertical = 8.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "වාර්තා කිරීම (On Duty)",
+                                fontSize = 12.sp,
+                                fontWeight = if (isOn) FontWeight.Bold else FontWeight.Medium,
+                                color = if (isOn) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (!isOn) DutyOffOrange else Color.Transparent)
+                                .clickable {
+                                    dutyType = "OFF_DUTY"
+                                    dutyNature = "Off Duty"
+                                    if (durationHours == 0) durationHours = 8
+                                }
+                                .padding(vertical = 8.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "බැහැරවීම (Off Duty)",
+                                fontSize = 12.sp,
+                                fontWeight = if (!isOn) FontWeight.Bold else FontWeight.Medium,
+                                color = if (!isOn) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    // Date & Time Selectors (Compact)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = { datePickerDialog.show() },
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.weight(1.2f)
+                        ) {
+                            Icon(Icons.Default.CalendarMonth, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(selectedDateStr, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+
+                        OutlinedButton(
+                            onClick = { timePickerDialog.show() },
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Default.AccessTime, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(selectedTimeStr, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    // Shift Duration if Off Duty
+                    if (dutyType == "OFF_DUTY") {
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = DutyOffOrange.copy(alpha = 0.1f),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Default.Timer, contentDescription = null, tint = DutyOffOrange, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "රාජකාරි කළ කාලය: $durationHours පැය $durationMinutes මිනි",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = DutyOffOrange,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    listOf(6, 8, 12).forEach { h ->
+                                        FilterChip(
+                                            selected = durationHours == h && durationMinutes == 0,
+                                            onClick = {
+                                                durationHours = h
+                                                durationMinutes = 0
+                                            },
+                                            label = { Text("${h}h", fontSize = 10.sp) }
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // IB Page and Paragraph Fields
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = ibPage,
+                            onValueChange = { ibPage = it },
+                            label = { Text("පොතේ පිටුව (Page)", fontSize = 11.sp) },
+                            placeholder = { Text("e.g. 142", fontSize = 11.sp) },
+                            leadingIcon = {
+                                Icon(Icons.Default.MenuBook, contentDescription = null, modifier = Modifier.size(16.dp))
+                            },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            singleLine = true,
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("ib_page_input")
+                        )
+
+                        OutlinedTextField(
+                            value = ibParagraph,
+                            onValueChange = { ibParagraph = it },
+                            label = { Text("ඡේදය (Para)", fontSize = 11.sp) },
+                            placeholder = { Text("e.g. 05", fontSize = 11.sp) },
+                            leadingIcon = {
+                                Icon(Icons.Default.Description, contentDescription = null, modifier = Modifier.size(16.dp))
+                            },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            singleLine = true,
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("ib_paragraph_input")
+                        )
+                    }
+
+                    // Duty Nature
+                    OutlinedTextField(
+                        value = dutyNature,
+                        onValueChange = { dutyNature = it },
+                        label = { Text("රාජකාරියේ ස්වභාවය (Duty Nature)", fontSize = 11.sp) },
+                        placeholder = { Text("e.g. Station Reserve / Day Mobile", fontSize = 11.sp) },
+                        singleLine = true,
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("duty_nature_input")
+                    )
+
+                    // Suggestion Chips (Compact)
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        dutySuggestions.forEach { suggestion ->
+                            val label = suggestion.substringBefore(" (")
+                            FilterChip(
+                                selected = dutyNature.startsWith(label),
+                                onClick = { dutyNature = label },
+                                label = { Text(label, fontSize = 10.sp) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                                    selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                            )
+                        }
+                    }
+
+                    // Remarks
+                    OutlinedTextField(
+                        value = remarks,
+                        onValueChange = { remarks = it },
+                        label = { Text("අමතර සටහන් (Remarks / Details)", fontSize = 11.sp) },
+                        placeholder = { Text("සිද්ධිය, ස්ථානය හෝ උපකරණ පිළිබඳ සටහන්...", fontSize = 11.sp) },
+                        maxLines = 2,
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("duty_remarks_input")
+                    )
+
+                    // --- PHOTOS SECTION: 1. IB BOOK PHOTO & 2. SCENE PHOTO ---
+                    Text(
+                        text = "ඡායාරූප සුරැකීම (Auto-Compressed Photos)",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+
+                    // 1. IB Book Photo Box
+                    PhotoPickerRow(
+                        label = "1. තොරතුරු පොතේ ඡායාරූපය (IB Photo)",
+                        photoUri = ibPhotoUri,
+                        onCameraClick = { launchCameraFor(isScene = false) },
+                        onGalleryClick = {
+                            ibGalleryLauncher.launch(
+                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                            )
+                        },
+                        onRemove = { ibPhotoUri = null }
+                    )
+
+                    // 2. Scene / Incident Photo Box (Requested by user)
+                    PhotoPickerRow(
+                        label = "2. සිද්ධියේ / ස්ථානයේ ඡායාරූපය (Scene Photo)",
+                        photoUri = scenePhotoUri,
+                        onCameraClick = { launchCameraFor(isScene = true) },
+                        onGalleryClick = {
+                            sceneGalleryLauncher.launch(
+                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                            )
+                        },
+                        onRemove = { scenePhotoUri = null }
+                    )
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    // Action Buttons (SAFE & NEVER COVERED)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = onDismiss,
+                            enabled = !isSubmitting,
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(44.dp)
+                        ) {
+                            Text("අවලංගු කරන්න", fontSize = 12.sp)
+                        }
+
+                        Button(
+                            onClick = {
+                                if (ibPage.isBlank()) {
+                                    Toast.makeText(context, "කරුණාකර පොතේ පිටුව ඇතුළත් කරන්න", Toast.LENGTH_SHORT).show()
+                                    return@Button
+                                }
+                                isSubmitting = true
+                                val finalTimestamp = calendar.timeInMillis
+                                val totalDurationMin = (durationHours * 60L) + durationMinutes
+                                onSubmit(
+                                    dutyType,
+                                    finalTimestamp,
+                                    ibPage,
+                                    ibParagraph,
+                                    dutyNature,
+                                    remarks,
+                                    ibPhotoUri,
+                                    scenePhotoUri,
+                                    totalDurationMin
+                                )
+                            },
+                            enabled = !isSubmitting && ibPage.isNotBlank(),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (dutyType == "ON_DUTY") DutyActiveGreen else DutyOffOrange
+                            ),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier
+                                .weight(1.2f)
+                                .height(44.dp)
+                                .testTag("submit_duty_button")
+                        ) {
+                            if (isSubmitting) {
+                                CircularProgressIndicator(color = Color.White, modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                            } else {
+                                Icon(Icons.Default.Done, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(if (dutyType == "ON_DUTY") "වාර්තා කරන්න" else "බැහැරවන්න", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(4.dp))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun PhotoPickerRow(
+    label: String,
+    photoUri: Uri?,
+    onCameraClick: () -> Unit,
+    onGalleryClick: () -> Unit,
+    onRemove: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(10.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+    ) {
+        Column(modifier = Modifier.padding(8.dp)) {
+            Text(text = label, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
+            Spacer(modifier = Modifier.height(4.dp))
+
+            if (photoUri != null) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Box(
+                    Image(
+                        painter = rememberAsyncImagePainter(model = photoUri),
+                        contentDescription = label,
                         modifier = Modifier
-                            .size(44.dp)
-                            .background(
-                                color = if (dutyType == "ON_DUTY") DutyActiveGreen.copy(alpha = 0.15f)
-                                else DutyOffOrange.copy(alpha = 0.15f),
-                                shape = CircleShape
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = if (dutyType == "ON_DUTY") Icons.Default.Security else Icons.Default.MenuBook,
-                            contentDescription = null,
-                            tint = if (dutyType == "ON_DUTY") DutyActiveGreen else DutyOffOrange
-                        )
-                    }
-                    Spacer(modifier = Modifier.width(12.dp))
+                            .size(46.dp)
+                            .clip(RoundedCornerShape(6.dp)),
+                        contentScale = ContentScale.Crop
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
                     Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = if (dutyType == "ON_DUTY") "රාජකාරි වාර්තා කිරීම" else "බැහැරවීම සටහන් කිරීම",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 18.sp,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Text(
-                            text = if (dutyType == "ON_DUTY") "On Duty Report" else "Off Duty Report",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        Text(text = "ඡායාරූපය තෝරා ඇත", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Compress, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(12.dp))
+                            Spacer(modifier = Modifier.width(2.dp))
+                            Text(text = "Auto compress & save", fontSize = 10.sp, color = MaterialTheme.colorScheme.primary)
+                        }
                     }
-                    IconButton(onClick = onDismiss, enabled = !isSubmitting) {
-                        Icon(imageVector = Icons.Default.Close, contentDescription = "Close")
+                    IconButton(onClick = onRemove, modifier = Modifier.size(32.dp)) {
+                        Icon(Icons.Default.Close, contentDescription = "Remove", tint = Color.Red, modifier = Modifier.size(16.dp))
                     }
                 }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // Type Toggle (On Duty / Off Duty)
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(12.dp))
-                        .padding(4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    val isOn = dutyType == "ON_DUTY"
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(if (isOn) DutyActiveGreen else Color.Transparent)
-                            .clickable {
-                                dutyType = "ON_DUTY"
-                                dutyNature = "Station Reserve"
-                            }
-                            .padding(vertical = 10.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = "වාර්තා කිරීම (On Duty)",
-                            fontSize = 13.sp,
-                            fontWeight = if (isOn) FontWeight.Bold else FontWeight.Medium,
-                            color = if (isOn) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(if (!isOn) DutyOffOrange else Color.Transparent)
-                            .clickable {
-                                dutyType = "OFF_DUTY"
-                                dutyNature = "Off Duty"
-                            }
-                            .padding(vertical = 10.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = "බැහැරවීම (Off Duty)",
-                            fontSize = 13.sp,
-                            fontWeight = if (!isOn) FontWeight.Bold else FontWeight.Medium,
-                            color = if (!isOn) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // Date and Time selection fields (Explicitly requested by user)
-                Text(
-                    text = "දිනය සහ වේලාව (Date & Time)",
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                Spacer(modifier = Modifier.height(6.dp))
-
+            } else {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    // Date Selector
-                    OutlinedButton(
-                        onClick = { datePickerDialog.show() },
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.weight(1.2f)
-                    ) {
-                        Icon(Icons.Default.CalendarMonth, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(selectedDateStr, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                    }
-
-                    // Time Selector
-                    OutlinedButton(
-                        onClick = { timePickerDialog.show() },
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Icon(Icons.Default.AccessTime, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(selectedTimeStr, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // Information Book (IB) Page and Paragraph Fields
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    OutlinedTextField(
-                        value = ibPage,
-                        onValueChange = { ibPage = it },
-                        label = { Text("පොතේ පිටුව (Page)") },
-                        placeholder = { Text("e.g. 142") },
-                        leadingIcon = {
-                            Icon(Icons.Default.MenuBook, contentDescription = null, modifier = Modifier.size(20.dp))
-                        },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        singleLine = true,
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("ib_page_input")
-                    )
-
-                    OutlinedTextField(
-                        value = ibParagraph,
-                        onValueChange = { ibParagraph = it },
-                        label = { Text("ඡේදය (Para)") },
-                        placeholder = { Text("e.g. 05") },
-                        leadingIcon = {
-                            Icon(Icons.Default.Description, contentDescription = null, modifier = Modifier.size(20.dp))
-                        },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        singleLine = true,
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("ib_paragraph_input")
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(14.dp))
-
-                // Duty Nature
-                OutlinedTextField(
-                    value = dutyNature,
-                    onValueChange = { dutyNature = it },
-                    label = { Text("රාජකාරියේ ස්වභාවය (Duty Nature)") },
-                    placeholder = { Text("e.g. Station Reserve / Day Mobile") },
-                    singleLine = true,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("duty_nature_input")
-                )
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                // Suggestion chips
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    dutySuggestions.forEach { suggestion ->
-                        val label = suggestion.substringBefore(" (")
-                        FilterChip(
-                            selected = dutyNature.startsWith(label),
-                            onClick = { dutyNature = label },
-                            label = { Text(label, fontSize = 11.sp) },
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                                selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(14.dp))
-
-                // Remarks / Notes
-                OutlinedTextField(
-                    value = remarks,
-                    onValueChange = { remarks = it },
-                    label = { Text("අමතර සටහන් (Remarks / Handover)") },
-                    placeholder = { Text("රාජකාරි උපකරණ, අවි ආයුධ හෝ සිදුවීම් සටහන්...") },
-                    maxLines = 3,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("duty_remarks_input")
-                )
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // Photo Capture Section (Information Book Photo)
-                Text(
-                    text = "පොතේ පිටුවේ ඡායාරූපය (IB Page Photo)",
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-
-                if (selectedPhotoUri != null) {
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Image(
-                                painter = rememberAsyncImagePainter(model = selectedPhotoUri),
-                                contentDescription = "Captured IB Photo",
-                                modifier = Modifier
-                                    .size(64.dp)
-                                    .clip(RoundedCornerShape(8.dp)),
-                                contentScale = ContentScale.Crop
-                            )
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "ඡායාරූපය තෝරාගෙන ඇත",
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 13.sp
-                                )
-                                Spacer(modifier = Modifier.height(2.dp))
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(
-                                        imageVector = Icons.Default.Compress,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text(
-                                        text = "ස්වයංක්‍රීයව compress කර සුරැකේ",
-                                        fontSize = 11.sp,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                }
-                            }
-                            IconButton(onClick = { selectedPhotoUri = null }) {
-                                Icon(Icons.Default.Close, contentDescription = "Remove photo", tint = Color.Red)
-                            }
-                        }
-                    }
-                } else {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        OutlinedButton(
-                            onClick = { launchCamera() },
-                            modifier = Modifier
-                                .weight(1f)
-                                .testTag("camera_button")
-                        ) {
-                            Icon(Icons.Default.CameraAlt, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("කැමරාව (Camera)", fontSize = 12.sp)
-                        }
-
-                        OutlinedButton(
-                            onClick = {
-                                galleryLauncher.launch(
-                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                                )
-                            },
-                            modifier = Modifier
-                                .weight(1f)
-                                .testTag("gallery_button")
-                        ) {
-                            Icon(Icons.Default.Collections, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("ගැලරිය (Gallery)", fontSize = 12.sp)
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(24.dp))
-
-                // Actions: Cancel & Submit
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     OutlinedButton(
-                        onClick = onDismiss,
-                        enabled = !isSubmitting,
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text("අවලංගු කරන්න")
-                    }
-
-                    Button(
-                        onClick = {
-                            if (ibPage.isBlank()) {
-                                Toast.makeText(context, "කරුණාකර තොරතුරු පොතේ පිටුව ඇතුළත් කරන්න", Toast.LENGTH_SHORT).show()
-                                return@Button
-                            }
-                            isSubmitting = true
-                            val finalTimestamp = calendar.timeInMillis
-                            onSubmit(dutyType, finalTimestamp, ibPage, ibParagraph, dutyNature, remarks, selectedPhotoUri)
-                        },
-                        enabled = !isSubmitting && ibPage.isNotBlank(),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = if (dutyType == "ON_DUTY") DutyActiveGreen else DutyOffOrange
-                        ),
+                        onClick = onCameraClick,
+                        shape = RoundedCornerShape(8.dp),
                         modifier = Modifier
                             .weight(1f)
-                            .testTag("submit_duty_button")
+                            .height(34.dp),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp)
                     ) {
-                        if (isSubmitting) {
-                            CircularProgressIndicator(
-                                color = Color.White,
-                                modifier = Modifier.size(20.dp),
-                                strokeWidth = 2.dp
-                            )
-                        } else {
-                            Icon(Icons.Default.Done, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(if (dutyType == "ON_DUTY") "වාර්තා කරන්න" else "බැහැරවන්න")
-                        }
+                        Icon(Icons.Default.CameraAlt, contentDescription = null, modifier = Modifier.size(14.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("කැමරාව", fontSize = 11.sp)
+                    }
+
+                    OutlinedButton(
+                        onClick = onGalleryClick,
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(34.dp),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp)
+                    ) {
+                        Icon(Icons.Default.Collections, contentDescription = null, modifier = Modifier.size(14.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("ගැලරිය", fontSize = 11.sp)
                     }
                 }
             }
@@ -572,8 +674,8 @@ fun DutyEntryDialog(
     }
 }
 
-private fun createTempImageUri(context: Context): Uri {
-    val tempFile = File.createTempFile("duty_capture_", ".jpg", context.cacheDir).apply {
+private fun createTempImageUri(context: Context, prefix: String): Uri {
+    val tempFile = File.createTempFile("duty_${prefix}_", ".jpg", context.cacheDir).apply {
         createNewFile()
         deleteOnExit()
     }
