@@ -122,6 +122,9 @@ class PoliceViewModel(private val repository: PoliceRepository) : ViewModel() {
     private val _dutyFilter = MutableStateFlow(DutyFilter.ALL)
     val dutyFilter: StateFlow<DutyFilter> = _dutyFilter.asStateFlow()
 
+    val allDutyRecords: StateFlow<List<DutyRecord>> = repository.allDutyRecords
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
     @OptIn(ExperimentalCoroutinesApi::class)
     private val rawDutyRecords: StateFlow<List<DutyRecord>> = _searchQuery
         .flatMapLatest { query -> repository.searchDutyRecords(query) }
@@ -141,9 +144,6 @@ class PoliceViewModel(private val repository: PoliceRepository) : ViewModel() {
 
     val latestDutyRecord: StateFlow<DutyRecord?> = repository.latestDutyRecord
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
-
-    val allDutyRecords: StateFlow<List<DutyRecord>> = repository.allDutyRecords
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val latestShiftRecord: StateFlow<DutyRecord?> = allDutyRecords.map { records ->
         records.firstOrNull { it.type == "ON_DUTY" || it.type == "OFF_DUTY" }
@@ -346,6 +346,9 @@ class PoliceViewModel(private val repository: PoliceRepository) : ViewModel() {
     val selectedVehicleFilter: StateFlow<String> = _selectedVehicleFilter.asStateFlow()
 
     val distinctVehicles: StateFlow<List<String>> = repository.distinctVehicles
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val allRunningChartRecords: StateFlow<List<RunningChartRecord>> = repository.allRunningChartRecords
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     @OptIn(ExperimentalCoroutinesApi::class)

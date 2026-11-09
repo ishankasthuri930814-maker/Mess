@@ -32,8 +32,10 @@ import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Restaurant
+import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Shield
+import com.example.ui.ExportReportDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -146,6 +148,8 @@ fun MainPoliceApp(viewModel: PoliceViewModel, isDarkTheme: Boolean) {
     var mealDialogType by remember { mutableStateOf("LUNCH") }
     var mealDialogExisting by remember { mutableStateOf<MessRecord?>(null) }
 
+    var isExportReportDialogOpen by remember { mutableStateOf(false) }
+
     var activePhotoView by remember { mutableStateOf<ActivePhotoView?>(null) }
 
     val officerProfile by viewModel.officerProfile.collectAsStateWithLifecycle()
@@ -234,6 +238,18 @@ fun MainPoliceApp(viewModel: PoliceViewModel, isDarkTheme: Boolean) {
                                     fontWeight = FontWeight.Bold
                                 )
                             }
+                        }
+
+                        // PDF / Report Export Button in top bar
+                        IconButton(
+                            onClick = { isExportReportDialogOpen = true },
+                            modifier = Modifier.padding(start = 2.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.PictureAsPdf,
+                                contentDescription = "Export Report PDF",
+                                tint = BadgeGold
+                            )
                         }
 
                         // Dark Mode Toggle Icon
@@ -418,6 +434,13 @@ fun MainPoliceApp(viewModel: PoliceViewModel, isDarkTheme: Boolean) {
                     }
                 )
             }
+        )
+    }
+
+    if (isExportReportDialogOpen) {
+        ExportReportDialog(
+            viewModel = viewModel,
+            onDismiss = { isExportReportDialogOpen = false }
         )
     }
 
