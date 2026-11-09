@@ -47,6 +47,7 @@ import androidx.compose.material.icons.filled.Done
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -207,20 +208,26 @@ fun DutyEntryDialog(
         }
     }
 
-    // Common duty quick selections
-    val dutySuggestions = if (dutyType == "ON_DUTY") {
-        listOf(
+    // Common duty quick selections based on type
+    val dutySuggestions = when (dutyType) {
+        "ON_DUTY" -> listOf(
             "Station Reserve (ස්ථාන රක්ෂිතය)",
+            "Day Shift (දිවා මුරය)",
+            "Night Shift (රාත්‍රී මුරය)",
+            "General Duty (සාමාන්‍ය රාජකාරිය)"
+        )
+        "EXTRA_DUTY" -> listOf(
             "Day Mobile (දිවා මුරසංචාරය)",
             "Night Mobile (රාත්‍රී මුරසංචාරය)",
             "Traffic Duty (රථවාහන)",
             "Court Duty (උසාවි රාජකාරි)",
             "VIP Security (විශේෂ ආරක්ෂක)",
             "Check Point (මාර්ග බාධක)",
-            "Raid / Investigation (වැටලීම්)"
+            "Raid / Investigation (වැටලීම්)",
+            "Special Incident (විශේෂ සිද්ධිය)",
+            "Crime Scene (ස්ථාන පරීක්ෂාව)"
         )
-    } else {
-        listOf(
+        else -> listOf(
             "General Off Duty (සාමාන්‍ය බැහැරවීම)",
             "Rest Day (විවේක දිනය)",
             "Leave (නිවාඩු)",
@@ -228,11 +235,31 @@ fun DutyEntryDialog(
         )
     }
 
+    val performSubmit: () -> Unit = {
+        if (ibPage.isBlank()) {
+            Toast.makeText(context, "කරුණාකර තොරතුරු පොතේ පිටුව ඇතුළත් කරන්න (Enter IB Page)", Toast.LENGTH_SHORT).show()
+        } else {
+            isSubmitting = true
+            val finalTimestamp = calendar.timeInMillis
+            val totalDurationMin = (durationHours * 60L) + durationMinutes
+            onSubmit(
+                dutyType,
+                finalTimestamp,
+                ibPage,
+                ibParagraph,
+                dutyNature,
+                remarks,
+                ibPhotoUri,
+                scenePhotoUri,
+                totalDurationMin
+            )
+        }
+    }
+
     Dialog(
         onDismissRequest = { if (!isSubmitting) onDismiss() },
         properties = DialogProperties(
-            usePlatformDefaultWidth = false,
-            decorFitsSystemWindows = false
+            usePlatformDefaultWidth = false
         )
     ) {
         Box(
@@ -241,7 +268,8 @@ fun DutyEntryDialog(
                 .background(Color.Black.copy(alpha = 0.55f))
                 .statusBarsPadding()
                 .navigationBarsPadding()
-                .imePadding(),
+                .imePadding()
+                .padding(vertical = 12.dp),
             contentAlignment = Alignment.Center
         ) {
             Surface(
@@ -259,94 +287,133 @@ fun DutyEntryDialog(
                         .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    // Header
+                    // Header with TOP SAVE BUTTON
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Box(
                             modifier = Modifier
-                                .size(36.dp)
+                                .size(34.dp)
                                 .background(
-                                    color = if (dutyType == "ON_DUTY") DutyActiveGreen.copy(alpha = 0.15f)
-                                    else DutyOffOrange.copy(alpha = 0.15f),
+                                    color = when (dutyType) {
+                                        "ON_DUTY" -> DutyActiveGreen.copy(alpha = 0.15f)
+                                        "EXTRA_DUTY" -> Color(0xFF2563EB).copy(alpha = 0.15f)
+                                        else -> DutyOffOrange.copy(alpha = 0.15f)
+                                    },
                                     shape = CircleShape
                                 ),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
-                                imageVector = if (dutyType == "ON_DUTY") Icons.Default.Security else Icons.Default.MenuBook,
+                                imageVector = when (dutyType) {
+                                    "ON_DUTY" -> Icons.Default.Security
+                                    "EXTRA_DUTY" -> Icons.Default.Shield
+                                    else -> Icons.Default.MenuBook
+                                },
                                 contentDescription = null,
-                                tint = if (dutyType == "ON_DUTY") DutyActiveGreen else DutyOffOrange,
-                                modifier = Modifier.size(20.dp)
+                                tint = when (dutyType) {
+                                    "ON_DUTY" -> DutyActiveGreen
+                                    "EXTRA_DUTY" -> Color(0xFF2563EB)
+                                    else -> DutyOffOrange
+                                },
+                                modifier = Modifier.size(18.dp)
                             )
                         }
-                        Spacer(modifier = Modifier.width(10.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = if (dutyType == "ON_DUTY") "රාජකාරි වාර්තා කිරීම" else "බැහැරවීම සටහන් කිරීම",
+                                text = when (dutyType) {
+                                    "ON_DUTY" -> "රාජකාරි වාර්තාව"
+                                    "EXTRA_DUTY" -> "අමතර රාජකාරිය"
+                                    else -> "බැහැරවීම"
+                                },
                                 fontWeight = FontWeight.Bold,
-                                fontSize = 15.sp,
+                                fontSize = 14.sp,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                             Text(
-                                text = if (dutyType == "ON_DUTY") "On Duty Report" else "Off Duty Report",
-                                fontSize = 11.sp,
+                                text = when (dutyType) {
+                                    "ON_DUTY" -> "Main On Duty"
+                                    "EXTRA_DUTY" -> "Extra Duty / Task"
+                                    else -> "Off Duty"
+                                },
+                                fontSize = 10.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                        IconButton(onClick = onDismiss, enabled = !isSubmitting, modifier = Modifier.size(32.dp)) {
-                            Icon(imageVector = Icons.Default.Close, contentDescription = "Close", modifier = Modifier.size(18.dp))
+
+                        // PROMINENT TOP SAVE BUTTON (NEVER HIDDEN BY NAVIGATION BAR)
+                        Button(
+                            onClick = { performSubmit() },
+                            enabled = !isSubmitting && ibPage.isNotBlank(),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = when (dutyType) {
+                                    "ON_DUTY" -> DutyActiveGreen
+                                    "EXTRA_DUTY" -> Color(0xFF2563EB)
+                                    else -> DutyOffOrange
+                                }
+                            ),
+                            shape = RoundedCornerShape(10.dp),
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                            modifier = Modifier
+                                .height(38.dp)
+                                .testTag("top_save_duty_btn")
+                        ) {
+                            if (isSubmitting) {
+                                CircularProgressIndicator(color = Color.White, modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                            } else {
+                                Icon(Icons.Default.Done, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("සුරකින්න", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.width(4.dp))
+                        IconButton(onClick = onDismiss, enabled = !isSubmitting, modifier = Modifier.size(34.dp)) {
+                            Icon(imageVector = Icons.Default.Close, contentDescription = "Close", modifier = Modifier.size(20.dp))
                         }
                     }
 
-                    // Type Toggle (On Duty / Off Duty)
+                    // 3-Segment Duty Type Selector (On Duty / Extra Duty / Off Duty)
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(10.dp))
                             .padding(2.dp),
-                        horizontalArrangement = Arrangement.spacedBy(3.dp)
+                        horizontalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
-                        val isOn = dutyType == "ON_DUTY"
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(if (isOn) DutyActiveGreen else Color.Transparent)
-                                .clickable {
-                                    dutyType = "ON_DUTY"
-                                    dutyNature = "Station Reserve"
-                                }
-                                .padding(vertical = 8.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = "වාර්තා කිරීම (On Duty)",
-                                fontSize = 12.sp,
-                                fontWeight = if (isOn) FontWeight.Bold else FontWeight.Medium,
-                                color = if (isOn) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(if (!isOn) DutyOffOrange else Color.Transparent)
-                                .clickable {
-                                    dutyType = "OFF_DUTY"
-                                    dutyNature = "Off Duty"
-                                    if (durationHours == 0) durationHours = 8
-                                }
-                                .padding(vertical = 8.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = "බැහැරවීම (Off Duty)",
-                                fontSize = 12.sp,
-                                fontWeight = if (!isOn) FontWeight.Bold else FontWeight.Medium,
-                                color = if (!isOn) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                        val items = listOf(
+                            Triple("ON_DUTY", "වාර්තා කිරීම", DutyActiveGreen),
+                            Triple("EXTRA_DUTY", "අමතර රාජකාරිය", Color(0xFF2563EB)),
+                            Triple("OFF_DUTY", "බැහැරවීම", DutyOffOrange)
+                        )
+                        items.forEach { (type, label, color) ->
+                            val isSelected = dutyType == type
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(if (isSelected) color else Color.Transparent)
+                                    .clickable {
+                                        dutyType = type
+                                        dutyNature = when (type) {
+                                            "ON_DUTY" -> "Station Reserve"
+                                            "EXTRA_DUTY" -> "Day Mobile"
+                                            else -> "General Off Duty"
+                                        }
+                                        if (type == "OFF_DUTY" && durationHours == 0) durationHours = 8
+                                    }
+                                    .padding(vertical = 7.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = label,
+                                    fontSize = 11.sp,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                    color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
                     }
 
@@ -529,9 +596,9 @@ fun DutyEntryDialog(
                         onRemove = { scenePhotoUri = null }
                     )
 
-                    Spacer(modifier = Modifier.height(6.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
 
-                    // Action Buttons (SAFE & NEVER COVERED)
+                    // Action Buttons (BOTH TOP & BOTTOM FOR MAXIMUM CONVENIENCE)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -548,33 +615,18 @@ fun DutyEntryDialog(
                         }
 
                         Button(
-                            onClick = {
-                                if (ibPage.isBlank()) {
-                                    Toast.makeText(context, "කරුණාකර පොතේ පිටුව ඇතුළත් කරන්න", Toast.LENGTH_SHORT).show()
-                                    return@Button
-                                }
-                                isSubmitting = true
-                                val finalTimestamp = calendar.timeInMillis
-                                val totalDurationMin = (durationHours * 60L) + durationMinutes
-                                onSubmit(
-                                    dutyType,
-                                    finalTimestamp,
-                                    ibPage,
-                                    ibParagraph,
-                                    dutyNature,
-                                    remarks,
-                                    ibPhotoUri,
-                                    scenePhotoUri,
-                                    totalDurationMin
-                                )
-                            },
+                            onClick = { performSubmit() },
                             enabled = !isSubmitting && ibPage.isNotBlank(),
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = if (dutyType == "ON_DUTY") DutyActiveGreen else DutyOffOrange
+                                containerColor = when (dutyType) {
+                                    "ON_DUTY" -> DutyActiveGreen
+                                    "EXTRA_DUTY" -> Color(0xFF2563EB)
+                                    else -> DutyOffOrange
+                                }
                             ),
                             shape = RoundedCornerShape(10.dp),
                             modifier = Modifier
-                                .weight(1.2f)
+                                .weight(1.3f)
                                 .height(44.dp)
                                 .testTag("submit_duty_button")
                         ) {
@@ -583,12 +635,21 @@ fun DutyEntryDialog(
                             } else {
                                 Icon(Icons.Default.Done, contentDescription = null, modifier = Modifier.size(16.dp))
                                 Spacer(modifier = Modifier.width(4.dp))
-                                Text(if (dutyType == "ON_DUTY") "වාර්තා කරන්න" else "බැහැරවන්න", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                Text(
+                                    text = when (dutyType) {
+                                        "ON_DUTY" -> "වාර්තා කරන්න"
+                                        "EXTRA_DUTY" -> "අමතර රාජකාරිය සුරකින්න"
+                                        else -> "බැහැරවන්න"
+                                    },
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
                             }
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(4.dp))
+                    // GENEROUS BOTTOM SPACER SO BUTTONS ARE NEVER CUT OFF BY OS NAVIGATION BAR
+                    Spacer(modifier = Modifier.height(36.dp))
                 }
             }
         }

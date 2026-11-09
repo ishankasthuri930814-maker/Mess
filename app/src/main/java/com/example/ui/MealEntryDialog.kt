@@ -43,6 +43,7 @@ import androidx.compose.material.icons.filled.WbSunny
 import androidx.compose.material.icons.filled.Bedtime
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -185,39 +186,64 @@ fun MealEntryDialog(
                         .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                // Header
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(44.dp)
-                            .background(BadgeGold.copy(alpha = 0.15f), CircleShape),
-                        contentAlignment = Alignment.Center
+                    // Header with TOP SAVE BUTTON
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(imageVector = mealIcon, contentDescription = null, tint = BadgeGold)
-                    }
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = mealTitle,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 18.sp,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Text(
-                            text = "පොලිස් මෙස් ආහාර සටහන",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    IconButton(onClick = onDismiss, enabled = !isSaving) {
-                        Icon(imageVector = Icons.Default.Close, contentDescription = "Close")
-                    }
-                }
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .background(BadgeGold.copy(alpha = 0.15f), CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(imageVector = mealIcon, contentDescription = null, tint = BadgeGold, modifier = Modifier.size(20.dp))
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = mealTitle,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 16.sp,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = "පොලිස් මෙස් ආහාර සටහන",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
 
-                Spacer(modifier = Modifier.height(16.dp))
+                        // TOP SAVE BUTTON
+                        Button(
+                            onClick = {
+                                isSaving = true
+                                onSave(mealType, isTaken, notes, selectedPhotoUri)
+                            },
+                            enabled = !isSaving,
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                            shape = RoundedCornerShape(10.dp),
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                            modifier = Modifier
+                                .height(38.dp)
+                                .testTag("top_submit_meal_btn")
+                        ) {
+                            if (isSaving) {
+                                CircularProgressIndicator(color = Color.White, modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                            } else {
+                                Icon(Icons.Default.Done, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("සුරකින්න", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.width(4.dp))
+                        IconButton(onClick = onDismiss, enabled = !isSaving, modifier = Modifier.size(34.dp)) {
+                            Icon(imageVector = Icons.Default.Close, contentDescription = "Close", modifier = Modifier.size(20.dp))
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
 
                 // Meal Selector Pills
                 Row(
@@ -454,6 +480,9 @@ fun MealEntryDialog(
                         }
                     }
                 }
+
+                // Generous bottom spacer so buttons are never cut off by OS navigation bar
+                Spacer(modifier = Modifier.height(36.dp))
             }
         }
     }

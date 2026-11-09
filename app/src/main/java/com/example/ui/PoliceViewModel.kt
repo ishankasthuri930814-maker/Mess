@@ -33,6 +33,7 @@ import kotlin.math.max
 enum class DutyFilter {
     ALL,
     ON_DUTY,
+    EXTRA_DUTY,
     OFF_DUTY
 }
 
@@ -85,6 +86,7 @@ class PoliceViewModel(private val repository: PoliceRepository) : ViewModel() {
         when (filter) {
             DutyFilter.ALL -> records
             DutyFilter.ON_DUTY -> records.filter { it.type == "ON_DUTY" }
+            DutyFilter.EXTRA_DUTY -> records.filter { it.type == "EXTRA_DUTY" }
             DutyFilter.OFF_DUTY -> records.filter { it.type == "OFF_DUTY" }
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -94,6 +96,10 @@ class PoliceViewModel(private val repository: PoliceRepository) : ViewModel() {
 
     val allDutyRecords: StateFlow<List<DutyRecord>> = repository.allDutyRecords
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val latestShiftRecord: StateFlow<DutyRecord?> = allDutyRecords.map { records ->
+        records.firstOrNull { it.type == "ON_DUTY" || it.type == "OFF_DUTY" }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
     val todayDutyMinutes: StateFlow<Long> = allDutyRecords.map { records ->
         calculateDutyMinutesForDate(records, DateTimeUtils.getTodayKey())
@@ -327,12 +333,10 @@ class PoliceViewModel(private val repository: PoliceRepository) : ViewModel() {
             repository.insertDutyRecord(record)
 
             val photoCount = (if (photoPath != null) 1 else 0) + (if (scenePhotoPath != null) 1 else 0)
-            val msg = if (type == "ON_DUTY") {
-                if (photoCount > 0) "රාජකාරිය වාර්තා විය! (ඡායාරූප $photoCount ක් සුරැකිණි - ${compKb}KB)"
-                else "රාජකාරිය සාර්ථකව වාර්තා විය!"
-            } else {
-                if (photoCount > 0) "බැහැරවීම සටහන් විය! (ඡායාරූප $photoCount ක් සුරැකිණි - ${compKb}KB)"
-                else "බැහැරවීම සාර්ථකව සටහන් විය!"
+            val msg = when (type) {
+                "ON_DUTY" -> if (photoCount > 0) "රාජකාරිය වාර්තා විය! (ඡායාරූප $photoCount ක් සුරැකිණි - ${compKb}KB)" else "රාජකාරිය සාර්ථකව වාර්තා විය!"
+                "EXTRA_DUTY" -> if (photoCount > 0) "අමතර රාජකාරිය සටහන් විය! (ඡායාරූප $photoCount ක් සුරැකිණි - ${compKb}KB)" else "අමතර රාජකාරිය සාර්ථකව සටහන් විය!"
+                else -> if (photoCount > 0) "බැහැරවීම සටහන් විය! (ඡායාරූප $photoCount ක් සුරැකිණි - ${compKb}KB)" else "බැහැරවීම සාර්ථකව සටහන් විය!"
             }
             _userMessage.emit(msg)
             onSuccess()

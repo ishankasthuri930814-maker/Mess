@@ -143,7 +143,8 @@ fun MainPoliceApp(viewModel: PoliceViewModel) {
 
     val officerProfile by viewModel.officerProfile.collectAsStateWithLifecycle()
     val latestDuty by viewModel.latestDutyRecord.collectAsStateWithLifecycle()
-    val isOnDuty = latestDuty?.type == "ON_DUTY"
+    val latestShift by viewModel.latestShiftRecord.collectAsStateWithLifecycle()
+    val isOnDuty = latestShift?.type == "ON_DUTY"
 
     // Back handler: return to Dashboard if on another screen
     BackHandler(enabled = currentScreen != Screen.DASHBOARD) {

@@ -83,6 +83,7 @@ fun DashboardScreen(
 ) {
     val profile by viewModel.officerProfile.collectAsStateWithLifecycle()
     val latestDuty by viewModel.latestDutyRecord.collectAsStateWithLifecycle()
+    val latestShift by viewModel.latestShiftRecord.collectAsStateWithLifecycle()
     val todayMeals by viewModel.selectedDayMeals.collectAsStateWithLifecycle()
     val storageStats by viewModel.storageStats.collectAsStateWithLifecycle()
     val recentDuties by viewModel.filteredDutyRecords.collectAsStateWithLifecycle()
@@ -90,7 +91,7 @@ fun DashboardScreen(
     val todayDutyHours by viewModel.todayDutyHoursFormatted.collectAsStateWithLifecycle()
     val monthlyDutyHours by viewModel.monthlyDutyHoursFormatted.collectAsStateWithLifecycle()
 
-    val isOnDuty = latestDuty?.type == "ON_DUTY"
+    val isOnDuty = latestShift?.type == "ON_DUTY"
 
     LazyColumn(
         modifier = Modifier
@@ -165,6 +166,7 @@ fun DashboardScreen(
                 todayDutyHours = todayDutyHours,
                 monthlyDutyHours = monthlyDutyHours,
                 onReportOnDuty = { onOpenDutyDialog("ON_DUTY") },
+                onReportExtraDuty = { onOpenDutyDialog("EXTRA_DUTY") },
                 onReportOffDuty = { onOpenDutyDialog("OFF_DUTY") },
                 onViewPhoto = onViewPhoto
             )
@@ -359,6 +361,7 @@ fun DutyStatusHeroCard(
     todayDutyHours: String = "",
     monthlyDutyHours: String = "",
     onReportOnDuty: () -> Unit,
+    onReportExtraDuty: () -> Unit,
     onReportOffDuty: () -> Unit,
     onViewPhoto: (path: String, title: String, compKb: Int, origKb: Int) -> Unit
 ) {
@@ -557,9 +560,29 @@ fun DutyStatusHeroCard(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(14.dp))
 
-                // Off duty button
+                // Action 1: Add Extra Duty / Incident during shift (Unlimited!)
+                Button(
+                    onClick = onReportExtraDuty,
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB)),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("hero_add_extra_duty_btn")
+                ) {
+                    Icon(imageVector = Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "+ අමතර රාජකාරියක් / සිද්ධියක් එක් කරන්න (Extra Duty)",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Action 2: Go Off Duty button
                 Button(
                     onClick = onReportOffDuty,
                     colors = ButtonDefaults.buttonColors(containerColor = DutyOffOrange),
@@ -569,9 +592,9 @@ fun DutyStatusHeroCard(
                         .testTag("hero_go_off_duty_btn")
                 ) {
                     Text(
-                        text = "බැහැරවීම සටහන් කරන්න (Go Off Duty)",
+                        text = "රාජකාරියෙන් බැහැරවීම සටහන් කරන්න (Go Off Duty)",
                         fontWeight = FontWeight.Bold,
-                        fontSize = 14.sp
+                        fontSize = 13.sp
                     )
                 }
             } else {
@@ -589,7 +612,7 @@ fun DutyStatusHeroCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(14.dp))
 
                 Button(
                     onClick = onReportOnDuty,
@@ -604,7 +627,25 @@ fun DutyStatusHeroCard(
                     Text(
                         text = "රාජකාරිය වාර්තා කරන්න (Report On Duty)",
                         fontWeight = FontWeight.Bold,
-                        fontSize = 14.sp
+                        fontSize = 13.sp
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                OutlinedButton(
+                    onClick = onReportExtraDuty,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("hero_report_extra_duty_btn")
+                ) {
+                    Icon(imageVector = Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "+ අමතර රාජකාරියක් / සිද්ධියක් සටහන් කරන්න",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold
                     )
                 }
             }

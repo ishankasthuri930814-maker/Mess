@@ -3,6 +3,8 @@ package com.example.ui
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -31,6 +33,7 @@ import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -195,9 +198,11 @@ fun DutyScreen(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            // Filter Chips
+            // Filter Chips (Scrollable)
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 FilterChip(
@@ -216,6 +221,16 @@ fun DutyScreen(
                     label = { Text("වාර්තා කිරීම් (On Duty)") },
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = DutyActiveGreen,
+                        selectedLabelColor = Color.White
+                    )
+                )
+
+                FilterChip(
+                    selected = dutyFilter == DutyFilter.EXTRA_DUTY,
+                    onClick = { viewModel.setDutyFilter(DutyFilter.EXTRA_DUTY) },
+                    label = { Text("අමතර රාජකාරි (Extra Duty)") },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = Color(0xFF2563EB),
                         selectedLabelColor = Color.White
                     )
                 )
@@ -307,7 +322,23 @@ fun DutyItemCard(
     onViewPhoto: (path: String, title: String, compKb: Int, origKb: Int) -> Unit,
     onDelete: () -> Unit
 ) {
+    val isExtraDuty = record.type == "EXTRA_DUTY"
     val isOnDuty = record.type == "ON_DUTY"
+    val badgeColor = when {
+        isExtraDuty -> Color(0xFF2563EB)
+        isOnDuty -> DutyActiveGreen
+        else -> DutyOffOrange
+    }
+    val badgeIcon = when {
+        isExtraDuty -> Icons.Default.Shield
+        isOnDuty -> Icons.Default.Security
+        else -> Icons.Default.MenuBook
+    }
+    val badgeText = when {
+        isExtraDuty -> "අමතර රාජකාරිය (Extra Duty)"
+        isOnDuty -> "වාර්තා කිරීම (On Duty)"
+        else -> "බැහැරවීම (Off Duty)"
+    }
 
     Card(
         modifier = Modifier
@@ -333,25 +364,24 @@ fun DutyItemCard(
                         modifier = Modifier
                             .size(32.dp)
                             .background(
-                                color = if (isOnDuty) DutyActiveGreen.copy(alpha = 0.15f)
-                                else DutyOffOrange.copy(alpha = 0.15f),
+                                color = badgeColor.copy(alpha = 0.15f),
                                 shape = CircleShape
                             ),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
-                            imageVector = if (isOnDuty) Icons.Default.Security else Icons.Default.MenuBook,
+                            imageVector = badgeIcon,
                             contentDescription = null,
-                            tint = if (isOnDuty) DutyActiveGreen else DutyOffOrange,
+                            tint = badgeColor,
                             modifier = Modifier.size(18.dp)
                         )
                     }
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = if (isOnDuty) "වාර්තා කිරීම (On Duty)" else "බැහැරවීම (Off Duty)",
+                        text = badgeText,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
-                        color = if (isOnDuty) DutyActiveGreen else DutyOffOrange
+                        color = badgeColor
                     )
                 }
 

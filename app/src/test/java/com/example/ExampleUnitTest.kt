@@ -51,6 +51,24 @@ class ExampleUnitTest {
   }
 
   @Test
+  fun verifyExtraDutyRecordCreation() {
+    val extraDuty = DutyRecord(
+      type = "EXTRA_DUTY",
+      ibPage = "88",
+      ibParagraph = "12",
+      dutyNature = "Court Duty",
+      photoPath = "/path/to/ib_court.jpg",
+      scenePhotoPath = "/path/to/scene_court.jpg",
+      dutyDurationMinutes = 180L,
+      compressedSizeKb = 95
+    )
+    assertEquals("EXTRA_DUTY", extraDuty.type)
+    assertEquals("88", extraDuty.ibPage)
+    assertEquals("12", extraDuty.ibParagraph)
+    assertEquals("Court Duty", extraDuty.dutyNature)
+  }
+
+  @Test
   fun verifyMessRecordCreation() {
     val mess = MessRecord(
       date = "2026-11-09",
