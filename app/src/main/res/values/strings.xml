@@ -1,0 +1,53 @@
+<resources>
+    <string name="app_name">All In One Police</string>
+    <string name="app_tagline">රාජකාරි, ගමන් සටහන් සහ නාමාවලිය</string>
+
+    <!-- Navigation -->
+    <string name="nav_dashboard">මුල් පිටුව</string>
+    <string name="nav_duty_logs">රාජකාරි සටහන්</string>
+    <string name="nav_mess">මෙස් ආහාර</string>
+    <string name="nav_profile">නිලධාරි තොරතුරු</string>
+
+    <!-- Profile & Registration -->
+    <string name="profile_title">නිලධාරි ලියාපදිංචිය (Officer Profile)</string>
+    <string name="officer_name">නිලධාරියාගේ නම (Full Name)</string>
+    <string name="officer_rank">තනතුර (Rank / Designation)</string>
+    <string name="officer_badge_number">නිල අංකය (Police / Reg No)</string>
+    <string name="officer_station">පොලිස් ස්ථානය (Police Station / Division)</string>
+    <string name="save_profile">තොරතුරු සුරකින්න</string>
+    <string name="profile_saved">නිලධාරී තොරතුරු සාර්ථකව සුරැකිණි!</string>
+
+    <!-- Duty Log -->
+    <string name="duty_on_report">රාජකාරි වාර්තා කිරීම (On Duty Report)</string>
+    <string name="duty_off_report">බැහැරවීම සටහන් කිරීම (Off Duty Report)</string>
+    <string name="ib_page_no">තොරතුරු පොතේ පිටුව (IB / Book Page No)</string>
+    <string name="ib_paragraph_no">ඡේද අංකය (Paragraph No)</string>
+    <string name="duty_nature">රාජකාරියේ ස්වභාවය (Duty Nature)</string>
+    <string name="duty_remarks">අමතර විස්තර / සටහන් (Remarks)</string>
+    <string name="duty_time">වේලාව (Time)</string>
+    <string name="duty_date">දිනය (Date)</string>
+    <string name="take_book_photo">පොතේ පිටුවේ ඡායාරූපයක් ගන්න (Take IB Photo)</string>
+    <string name="choose_gallery">ගැලරියෙන් තෝරන්න (Choose from Gallery)</string>
+    <string name="photo_attached">ඡායාරූපය සාර්ථකව සම්පීඩනය කර සුරැකිණි</string>
+    <string name="active_duty_banner">ඔබ දැනට රාජකාරියේ නිරතව සිටී</string>
+    <string name="off_duty_banner">දැනට නිවාඩු / රාජකාරියෙන් බැහැරයි</string>
+
+    <!-- Mess / Meals -->
+    <string name="mess_title">පොලිස් මෙස් ආහාර සටහන (Police Mess)</string>
+    <string name="meal_breakfast">උදේ ආහාරය (Breakfast)</string>
+    <string name="meal_lunch">දිවා ආහාරය (Lunch)</string>
+    <string name="meal_dinner">රාත්‍රී ආහාරය (Dinner)</string>
+    <string name="meal_taken">ලබා ගත්තා</string>
+    <string name="meal_not_taken">ලබා නොගත්තා</string>
+    <string name="meal_photo">ආහාරයේ ඡායාරූපය (Meal Photo)</string>
+    <string name="meal_notes">සටහන් / මෙනුව (Notes / Items)</string>
+    <string name="monthly_summary">මාසික ආහාර සාරාංශය (Monthly Summary)</string>
+
+    <!-- Common -->
+    <string name="save">සුරකින්න (Save)</string>
+    <string name="cancel">අවලංගු කරන්න (Cancel)</string>
+    <string name="delete">මකන්න (Delete)</string>
+    <string name="filter_all">සියල්ල</string>
+    <string name="search_hint">සොයන්න (පිටුව, ඡේදය, දිනය)...</string>
+    <string name="no_records">තවම කිසිදු සටහනක් නොමැත</string>
+</resources>
