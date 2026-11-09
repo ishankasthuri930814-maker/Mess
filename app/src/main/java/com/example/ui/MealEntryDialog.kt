@@ -71,6 +71,8 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -88,15 +90,24 @@ fun MealEntryDialog(
     initialMealType: String = "LUNCH",
     existingRecord: MessRecord? = null,
     onDismiss: () -> Unit,
-    onSave: (mealType: String, isTaken: Boolean, notes: String, photoUri: Uri?) -> Unit
+    onSave: (mealType: String, isTaken: Boolean, notes: String, price: Double, photoUri: Uri?) -> Unit
 ) {
     val context = LocalContext.current
     var mealType by remember { mutableStateOf(existingRecord?.mealType ?: initialMealType) }
     var isTaken by remember { mutableStateOf(existingRecord?.isTaken ?: true) }
     var notes by remember { mutableStateOf(existingRecord?.mealNotes ?: "") }
+    var priceText by remember {
+        mutableStateOf(if ((existingRecord?.price ?: 0.0) > 0.0) "%.2f".format(existingRecord?.price) else "")
+    }
     var selectedPhotoUri by remember { mutableStateOf<Uri?>(null) }
     var cameraPhotoUri by remember { mutableStateOf<Uri?>(null) }
     var isSaving by remember { mutableStateOf(false) }
+
+    val performSave = {
+        isSaving = true
+        val parsedPrice = priceText.toDoubleOrNull() ?: 0.0
+        onSave(mealType, isTaken, notes, parsedPrice, selectedPhotoUri)
+    }
 
     val mealTitle = when (mealType) {
         "BREAKFAST" -> "උදේ ආහාරය (Breakfast)"
@@ -216,10 +227,7 @@ fun MealEntryDialog(
 
                         // TOP SAVE BUTTON
                         Button(
-                            onClick = {
-                                isSaving = true
-                                onSave(mealType, isTaken, notes, selectedPhotoUri)
-                            },
+                            onClick = { performSave() },
                             enabled = !isSaving,
                             colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                             shape = RoundedCornerShape(10.dp),
@@ -349,6 +357,22 @@ fun MealEntryDialog(
                     }
                 }
 
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Meal Price Input
+                OutlinedTextField(
+                    value = priceText,
+                    onValueChange = { priceText = it },
+                    label = { Text("ආහාරයේ මිල - රුපියල් (Meal Price in LKR)") },
+                    placeholder = { Text("e.g. 180") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    leadingIcon = { Text("රු. ", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 12.dp)) },
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("meal_price_input")
+                )
+
                 Spacer(modifier = Modifier.height(16.dp))
 
                 // Meal Photo Capture Section
@@ -458,10 +482,7 @@ fun MealEntryDialog(
                     }
 
                     Button(
-                        onClick = {
-                            isSaving = true
-                            onSave(mealType, isTaken, notes, selectedPhotoUri)
-                        },
+                        onClick = { performSave() },
                         enabled = !isSaving,
                         modifier = Modifier
                             .weight(1f)

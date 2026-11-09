@@ -48,7 +48,14 @@ data class MonthlyMessSummary(
     val breakfastCount: Int = 0,
     val lunchCount: Int = 0,
     val dinnerCount: Int = 0,
-    val totalMeals: Int = 0
+    val totalMeals: Int = 0,
+    val breakfastCost: Double = 0.0,
+    val lunchCost: Double = 0.0,
+    val dinnerCost: Double = 0.0,
+    val monthlyTotalCost: Double = 0.0,
+    val todayTotalCost: Double = 0.0,
+    val allTimeTotalCost: Double = 0.0,
+    val allTimeTotalMeals: Int = 0
 )
 
 data class MonthlyVehicleSummary(
@@ -87,6 +94,22 @@ data class DailyMessSummary(
 )
 
 class PoliceViewModel(private val repository: PoliceRepository) : ViewModel() {
+
+    // --- Dark Mode State ---
+    private val _isDarkMode = MutableStateFlow<Boolean?>(null)
+    val isDarkMode: StateFlow<Boolean?> = _isDarkMode.asStateFlow()
+
+    fun toggleDarkMode() {
+        _isDarkMode.value = when (_isDarkMode.value) {
+            true -> false
+            false -> true
+            else -> true
+        }
+    }
+
+    fun setDarkMode(dark: Boolean?) {
+        _isDarkMode.value = dark
+    }
 
     // --- Officer Profile ---
     val officerProfile: StateFlow<OfficerProfile?> = repository.officerProfile
@@ -148,6 +171,59 @@ class PoliceViewModel(private val repository: PoliceRepository) : ViewModel() {
         formatHoursMinutesSinhala(totalMins)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "0 පැය 0 මිනි")
 
+    // --- Daily Duty Summaries (Grouped by Date) ---
+    val dailyDutySummaries: StateFlow<List<DailyDutySummary>> = allDutyRecords.map { records ->
+        val grouped = records.groupBy { DateTimeUtils.formatDate(it.timestamp) }
+        grouped.map { (dateKey, dayRecords) ->
+            val onDuty = dayRecords.firstOrNull { it.type == "ON_DUTY" }
+            val offDuty = dayRecords.firstOrNull { it.type == "OFF_DUTY" }
+            val extraDuties = dayRecords.filter { it.type == "EXTRA_DUTY" }
+            val mins = calculateDutyMinutesForDate(dayRecords, dateKey)
+            val photosCount = dayRecords.count { !it.photoPath.isNullOrBlank() } + dayRecords.count { !it.scenePhotoPath.isNullOrBlank() }
+            val isOngoing = onDuty != null && offDuty == null && dateKey == DateTimeUtils.getTodayKey()
+            DailyDutySummary(
+                dateKey = dateKey,
+                formattedDate = DateTimeUtils.formatSinhalaDisplayDate(dateKey),
+                onDutyRecord = onDuty,
+                offDutyRecord = offDuty,
+                extraDutyRecords = extraDuties,
+                allRecords = dayRecords,
+                totalDutyMinutes = mins,
+                totalHoursFormatted = formatHoursMinutesSinhala(mins),
+                isOngoing = isOngoing,
+                totalPhotosCount = photosCount
+            )
+        }.sortedByDescending { it.dateKey }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    // --- Mess Rates State ---
+    private val _breakfastDefaultPrice = MutableStateFlow(150.0)
+    val breakfastDefaultPrice: StateFlow<Double> = _breakfastDefaultPrice.asStateFlow()
+
+    private val _lunchDefaultPrice = MutableStateFlow(220.0)
+    val lunchDefaultPrice: StateFlow<Double> = _lunchDefaultPrice.asStateFlow()
+
+    private val _dinnerDefaultPrice = MutableStateFlow(180.0)
+    val dinnerDefaultPrice: StateFlow<Double> = _dinnerDefaultPrice.asStateFlow()
+
+    fun updateDefaultMealPrices(bPrice: Double, lPrice: Double, dPrice: Double) {
+        _breakfastDefaultPrice.value = maxOf(0.0, bPrice)
+        _lunchDefaultPrice.value = maxOf(0.0, lPrice)
+        _dinnerDefaultPrice.value = maxOf(0.0, dPrice)
+        viewModelScope.launch {
+            _userMessage.emit("ආහාර වල පෙරනිමි මිල ගණන් යාවත්කාලීන විය!")
+        }
+    }
+
+    fun getDefaultPriceForType(mealType: String): Double {
+        return when (mealType) {
+            "BREAKFAST" -> _breakfastDefaultPrice.value
+            "LUNCH" -> _lunchDefaultPrice.value
+            "DINNER" -> _dinnerDefaultPrice.value
+            else -> 180.0
+        }
+    }
+
     // --- Mess Records ---
     private val _selectedMessDate = MutableStateFlow(DateTimeUtils.getTodayKey())
     val selectedMessDate: StateFlow<String> = _selectedMessDate.asStateFlow()
@@ -161,18 +237,77 @@ class PoliceViewModel(private val repository: PoliceRepository) : ViewModel() {
     val monthlyMessRecords: StateFlow<List<MessRecord>> = repository.getMessRecordsForMonth(currentMonthKey)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    val monthlySummary: StateFlow<MonthlyMessSummary> = monthlyMessRecords.combine(monthlyMessRecords) { records, _ ->
-        val taken = records.filter { it.isTaken }
-        val b = taken.count { it.mealType == "BREAKFAST" }
-        val l = taken.count { it.mealType == "LUNCH" }
-        val d = taken.count { it.mealType == "DINNER" }
+    val allMessRecords: StateFlow<List<MessRecord>> = repository.allMessRecords
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val monthlySummary: StateFlow<MonthlyMessSummary> = combine(
+        monthlyMessRecords,
+        allMessRecords,
+        combine(_breakfastDefaultPrice, _lunchDefaultPrice, _dinnerDefaultPrice) { b, l, d -> Triple(b, l, d) }
+    ) { monthRecords: List<MessRecord>, allRecords: List<MessRecord>, prices: Triple<Double, Double, Double> ->
+        val (bPrice, lPrice, dPrice) = prices
+        fun getRecordPrice(r: MessRecord): Double {
+            return if (r.price > 0.0) r.price else when (r.mealType) {
+                "BREAKFAST" -> bPrice
+                "LUNCH" -> lPrice
+                "DINNER" -> dPrice
+                else -> 180.0
+            }
+        }
+
+        val monthTaken = monthRecords.filter { it.isTaken }
+        val bList = monthTaken.filter { it.mealType == "BREAKFAST" }
+        val lList = monthTaken.filter { it.mealType == "LUNCH" }
+        val dList = monthTaken.filter { it.mealType == "DINNER" }
+
+        val bCost = bList.sumOf { getRecordPrice(it) }
+        val lCost = lList.sumOf { getRecordPrice(it) }
+        val dCost = dList.sumOf { getRecordPrice(it) }
+        val monthTotalCost = bCost + lCost + dCost
+
+        val todayKey = DateTimeUtils.getTodayKey()
+        val todayTaken = allRecords.filter { it.date == todayKey && it.isTaken }
+        val todayCost = todayTaken.sumOf { getRecordPrice(it) }
+
+        val allTaken = allRecords.filter { it.isTaken }
+        val allTimeCost = allTaken.sumOf { getRecordPrice(it) }
+
         MonthlyMessSummary(
-            breakfastCount = b,
-            lunchCount = l,
-            dinnerCount = d,
-            totalMeals = b + l + d
+            breakfastCount = bList.size,
+            lunchCount = lList.size,
+            dinnerCount = dList.size,
+            totalMeals = monthTaken.size,
+            breakfastCost = bCost,
+            lunchCost = lCost,
+            dinnerCost = dCost,
+            monthlyTotalCost = monthTotalCost,
+            todayTotalCost = todayCost,
+            allTimeTotalCost = allTimeCost,
+            allTimeTotalMeals = allTaken.size
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), MonthlyMessSummary())
+
+    val dailyMessSummaries: StateFlow<List<DailyMessSummary>> = allMessRecords.map { records ->
+        val grouped = records.groupBy { it.date }
+        grouped.map { (dateKey, dayRecords) ->
+            val b = dayRecords.firstOrNull { it.mealType == "BREAKFAST" }
+            val l = dayRecords.firstOrNull { it.mealType == "LUNCH" }
+            val d = dayRecords.firstOrNull { it.mealType == "DINNER" }
+            val takenCount = dayRecords.count { it.isTaken }
+            val photosCount = dayRecords.count { !it.photoPath.isNullOrBlank() }
+            DailyMessSummary(
+                dateKey = dateKey,
+                formattedDate = DateTimeUtils.formatSinhalaDisplayDate(dateKey),
+                breakfast = b,
+                lunch = l,
+                dinner = d,
+                allRecords = dayRecords,
+                takenCount = takenCount,
+                totalPhotosCount = photosCount,
+                isCurrentDay = dateKey == DateTimeUtils.getTodayKey()
+            )
+        }.sortedByDescending { it.dateKey }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     // --- Storage Stats ---
     val storageStats: StateFlow<StorageStats> = combine(
@@ -417,7 +552,8 @@ class PoliceViewModel(private val repository: PoliceRepository) : ViewModel() {
     fun toggleMealTaken(mealType: String, isTaken: Boolean) {
         viewModelScope.launch {
             val date = _selectedMessDate.value
-            repository.toggleMealTaken(date, mealType, isTaken)
+            val defaultPrice = getDefaultPriceForType(mealType)
+            repository.toggleMealTaken(date, mealType, isTaken, defaultPrice = defaultPrice)
         }
     }
 
@@ -426,6 +562,7 @@ class PoliceViewModel(private val repository: PoliceRepository) : ViewModel() {
         mealType: String,
         isTaken: Boolean,
         notes: String,
+        price: Double = 0.0,
         photoUri: Uri?,
         onSuccess: () -> Unit
     ) {
@@ -442,17 +579,21 @@ class PoliceViewModel(private val repository: PoliceRepository) : ViewModel() {
                 }
             }
 
+            val finalPrice = if (price > 0.0) price else getDefaultPriceForType(mealType)
+
             repository.saveMealRecord(
                 date = date,
                 mealType = mealType,
                 isTaken = isTaken,
                 notes = notes.trim(),
+                price = finalPrice,
                 photoPath = photoPath,
                 compressedSizeKb = compKb
             )
 
-            val msg = if (compKb > 0) "ආහාර සටහන සුරැකිණි! ඡායාරූපය ${compKb}KB දක්වා සම්පීඩනය විය."
-            else "ආහාර සටහන සුරැකිණි!"
+            val priceFormatted = "රු. %.2f".format(finalPrice)
+            val msg = if (compKb > 0) "ආහාර සටහන ($priceFormatted) සුරැකිණි! Photo compress විය."
+            else "ආහාර සටහන ($priceFormatted) සුරැකිණි!"
             _userMessage.emit(msg)
             onSuccess()
         }

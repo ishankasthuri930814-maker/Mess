@@ -21,10 +21,13 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Badge
+import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.DirectionsCar
+import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Phone
@@ -115,8 +118,12 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            MyApplicationTheme {
-                MainPoliceApp(viewModel = viewModel)
+            val isDarkModeOverride by viewModel.isDarkMode.collectAsStateWithLifecycle()
+            val systemInDark = isSystemInDarkTheme()
+            val isDarkTheme = isDarkModeOverride ?: systemInDark
+
+            MyApplicationTheme(darkTheme = isDarkTheme) {
+                MainPoliceApp(viewModel = viewModel, isDarkTheme = isDarkTheme)
             }
         }
     }
@@ -124,7 +131,7 @@ class MainActivity : ComponentActivity() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MainPoliceApp(viewModel: PoliceViewModel) {
+fun MainPoliceApp(viewModel: PoliceViewModel, isDarkTheme: Boolean) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -229,10 +236,22 @@ fun MainPoliceApp(viewModel: PoliceViewModel) {
                             }
                         }
 
+                        // Dark Mode Toggle Icon
+                        IconButton(
+                            onClick = { viewModel.toggleDarkMode() },
+                            modifier = Modifier.padding(start = 2.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (isDarkTheme) Icons.Default.LightMode else Icons.Default.DarkMode,
+                                contentDescription = "Toggle Dark Mode",
+                                tint = BadgeGold
+                            )
+                        }
+
                         // Officer profile shortcut icon in top bar
                         IconButton(
                             onClick = { currentScreen = Screen.PROFILE },
-                            modifier = Modifier.padding(start = 4.dp)
+                            modifier = Modifier.padding(start = 2.dp)
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Person,
@@ -386,12 +405,13 @@ fun MainPoliceApp(viewModel: PoliceViewModel) {
             initialMealType = mealDialogType,
             existingRecord = mealDialogExisting,
             onDismiss = { isMealDialogOpen = false },
-            onSave = { type, isTaken, notes, photoUri ->
+            onSave = { type, isTaken, notes, price, photoUri ->
                 viewModel.saveMealDetails(
                     context = context,
                     mealType = type,
                     isTaken = isTaken,
                     notes = notes,
+                    price = price,
                     photoUri = photoUri,
                     onSuccess = {
                         isMealDialogOpen = false

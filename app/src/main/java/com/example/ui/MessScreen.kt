@@ -35,7 +35,6 @@ import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material.icons.filled.Restaurant
 import androidx.compose.material.icons.filled.Today
 import androidx.compose.material.icons.filled.WbSunny
-import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -49,7 +48,7 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -85,8 +84,14 @@ fun MessScreen(
     val dayMeals by viewModel.selectedDayMeals.collectAsStateWithLifecycle()
     val monthlyMeals by viewModel.monthlyMessRecords.collectAsStateWithLifecycle()
     val monthlySummary by viewModel.monthlySummary.collectAsStateWithLifecycle()
+    val dailyMessSummaries by viewModel.dailyMessSummaries.collectAsStateWithLifecycle()
 
-    var mealCostRate by remember { mutableIntStateOf(180) } // Default approx mess cut per meal in LKR
+    val bDefaultPrice by viewModel.breakfastDefaultPrice.collectAsStateWithLifecycle()
+    val lDefaultPrice by viewModel.lunchDefaultPrice.collectAsStateWithLifecycle()
+    val dDefaultPrice by viewModel.dinnerDefaultPrice.collectAsStateWithLifecycle()
+
+    var isConfigureRatesOpen by remember { mutableStateOf(false) }
+    var selectedMessSummary by remember { mutableStateOf<DailyMessSummary?>(null) }
 
     val breakfastRecord = dayMeals.firstOrNull { it.mealType == "BREAKFAST" }
     val lunchRecord = dayMeals.firstOrNull { it.mealType == "LUNCH" }
@@ -101,11 +106,17 @@ fun MessScreen(
     ) {
         item { Spacer(modifier = Modifier.height(8.dp)) }
 
-        // 1. Date Selector Bar
+        // 1. Date Selector Bar (Click date text to view daily summary breakdown)
         item {
             DateNavigationCard(
                 selectedDate = selectedDate,
-                onDateChange = { viewModel.selectMessDate(it) }
+                onDateChange = { viewModel.selectMessDate(it) },
+                onViewDaySummary = {
+                    val summary = dailyMessSummaries.firstOrNull { it.dateKey == selectedDate }
+                    if (summary != null) {
+                        selectedMessSummary = summary
+                    }
+                }
             )
         }
 
@@ -117,6 +128,7 @@ fun MessScreen(
                 icon = Icons.Default.WbSunny,
                 iconColor = BadgeGold,
                 record = breakfastRecord,
+                defaultPrice = bDefaultPrice,
                 onToggle = { isTaken -> viewModel.toggleMealTaken("BREAKFAST", isTaken) },
                 onEdit = { onOpenMealDialog("BREAKFAST", breakfastRecord) },
                 onViewPhoto = onViewPhoto,
@@ -132,6 +144,7 @@ fun MessScreen(
                 icon = Icons.Default.LightMode,
                 iconColor = Color(0xFFF59E0B),
                 record = lunchRecord,
+                defaultPrice = lDefaultPrice,
                 onToggle = { isTaken -> viewModel.toggleMealTaken("LUNCH", isTaken) },
                 onEdit = { onOpenMealDialog("LUNCH", lunchRecord) },
                 onViewPhoto = onViewPhoto,
@@ -147,6 +160,7 @@ fun MessScreen(
                 icon = Icons.Default.Bedtime,
                 iconColor = Color(0xFF6366F1),
                 record = dinnerRecord,
+                defaultPrice = dDefaultPrice,
                 onToggle = { isTaken -> viewModel.toggleMealTaken("DINNER", isTaken) },
                 onEdit = { onOpenMealDialog("DINNER", dinnerRecord) },
                 onViewPhoto = onViewPhoto,
@@ -154,12 +168,11 @@ fun MessScreen(
             )
         }
 
-        // 5. Monthly Mess Summary & Bill Estimator
+        // 5. Monthly & Overall Mess Expenditure Summary
         item {
             MonthlyMessSummaryCard(
                 summary = monthlySummary,
-                mealCostRate = mealCostRate,
-                onRateChange = { mealCostRate = it }
+                onOpenConfigureRates = { isConfigureRatesOpen = true }
             )
         }
 
@@ -177,18 +190,53 @@ fun MessScreen(
             items(monthlyMeals, key = { it.id }) { record ->
                 MonthlyMealListItem(
                     record = record,
+                    defaultPrice = viewModel.getDefaultPriceForType(record.mealType),
                     onViewPhoto = onViewPhoto,
-                    onDelete = { viewModel.deleteMealRecord(record) }
+                    onDelete = { viewModel.deleteMealRecord(record) },
+                    onViewDaySummary = {
+                        val summary = dailyMessSummaries.firstOrNull { it.dateKey == record.date }
+                        if (summary != null) selectedMessSummary = summary
+                    }
                 )
             }
         }
+    }
+
+    // Configure Rates Dialog
+    if (isConfigureRatesOpen) {
+        ConfigureMessRatesDialog(
+            initialBreakfast = bDefaultPrice,
+            initialLunch = lDefaultPrice,
+            initialDinner = dDefaultPrice,
+            onDismiss = { isConfigureRatesOpen = false },
+            onSaveRates = { b, l, d ->
+                viewModel.updateDefaultMealPrices(b, l, d)
+                isConfigureRatesOpen = false
+            }
+        )
+    }
+
+    // Day Mess Summary Dialog
+    selectedMessSummary?.let { summary ->
+        DayMessSummaryDialog(
+            summary = summary,
+            mealCostRate = lDefaultPrice.toInt(),
+            onDismiss = { selectedMessSummary = null },
+            onEditMeal = { mealType, existingRecord ->
+                selectedMessSummary = null
+                viewModel.selectMessDate(summary.dateKey)
+                onOpenMealDialog(mealType, existingRecord)
+            },
+            onViewPhoto = onViewPhoto
+        )
     }
 }
 
 @Composable
 fun DateNavigationCard(
     selectedDate: String,
-    onDateChange: (String) -> Unit
+    onDateChange: (String) -> Unit,
+    onViewDaySummary: (() -> Unit)? = null
 ) {
     val displayDate = DateTimeUtils.formatDisplayDateFromKey(selectedDate)
     val isToday = selectedDate == DateTimeUtils.getTodayKey()
@@ -215,21 +263,22 @@ fun DateNavigationCard(
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Previous Day")
             }
 
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.clickable { onViewDaySummary?.invoke() }
+            ) {
                 Text(
                     text = displayDate,
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface
                 )
-                if (isToday) {
-                    Text(
-                        text = "අද දිනය (Today)",
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                }
+                Text(
+                    text = if (isToday) "අද දිනය (එදින සාරාංශය ->)" else "එදින සාරාංශය බලන්න ->",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.SemiBold
+                )
             }
 
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -259,6 +308,7 @@ fun MealCard(
     icon: ImageVector,
     iconColor: Color,
     record: MessRecord?,
+    defaultPrice: Double,
     onToggle: (Boolean) -> Unit,
     onEdit: () -> Unit,
     onViewPhoto: (path: String, title: String, compKb: Int, origKb: Int) -> Unit,
@@ -266,6 +316,7 @@ fun MealCard(
 ) {
     val isTaken = record?.isTaken == true
     val hasPhoto = !record?.photoPath.isNullOrBlank()
+    val activePrice = if ((record?.price ?: 0.0) > 0.0) record!!.price else defaultPrice
 
     Card(
         modifier = Modifier
@@ -283,7 +334,7 @@ fun MealCard(
                 .fillMaxWidth()
                 .padding(16.dp)
         ) {
-            // Header: Icon, Title, and Taken Switch
+            // Header: Icon, Title, Price & Taken Switch
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
@@ -298,18 +349,30 @@ fun MealCard(
                 }
                 Spacer(modifier = Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = title,
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Text(
-                        text = if (isTaken) "ආහාරය ලබා ගත්තා (Taken)" else "ලබා නොගත්තා (Skipped)",
-                        fontSize = 12.sp,
-                        color = if (isTaken) DutyActiveGreen else MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontWeight = if (isTaken) FontWeight.SemiBold else FontWeight.Normal
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = title,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = if (isTaken) "ලබා ගත්තා" else "ලබා නොගත්තා",
+                            fontSize = 12.sp,
+                            color = if (isTaken) DutyActiveGreen else MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontWeight = if (isTaken) FontWeight.SemiBold else FontWeight.Normal
+                        )
+                        if (isTaken) {
+                            Text(
+                                text = " • රු. ${"%.2f".format(activePrice)}",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
                 }
 
                 Switch(
@@ -402,7 +465,7 @@ fun MealCard(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Action Button: Add / Edit Note & Photo
+            // Action Button: Add / Edit Note & Photo & Price
             OutlinedButton(
                 onClick = onEdit,
                 shape = RoundedCornerShape(12.dp),
@@ -417,8 +480,8 @@ fun MealCard(
                 )
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
-                    text = if (hasPhoto || record?.mealNotes?.isNotBlank() == true) "සටහන / ඡායාරූපය සංස්කරණය"
-                    else "ඡායාරූපයක් / සටහනක් එක් කරන්න",
+                    text = if (hasPhoto || record?.mealNotes?.isNotBlank() == true) "මිල / සටහන / ඡායාරූපය සංස්කරණය"
+                    else "මිල / ඡායාරූපයක් / සටහනක් එක් කරන්න",
                     fontSize = 12.sp
                 )
             }
@@ -429,8 +492,7 @@ fun MealCard(
 @Composable
 fun MonthlyMessSummaryCard(
     summary: MonthlyMessSummary,
-    mealCostRate: Int,
-    onRateChange: (Int) -> Unit
+    onOpenConfigureRates: () -> Unit
 ) {
     Card(
         modifier = Modifier
@@ -459,85 +521,110 @@ fun MonthlyMessSummaryCard(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "මාසික ආහාර සාරාංශය (Monthly Summary)",
+                        text = "මෙස් වියදම් සාරාංශය (Mess Expenditure)",
                         fontSize = 15.sp,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onSurface
                     )
                 }
 
-                Text(
-                    text = DateTimeUtils.getCurrentMonthYear(),
-                    fontSize = 12.sp,
+                OutlinedButton(
+                    onClick = onOpenConfigureRates,
+                    shape = RoundedCornerShape(10.dp),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                    modifier = Modifier.height(32.dp)
+                ) {
+                    Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(14.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("මිල වෙනස් කරන්න", fontSize = 11.sp)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // 3 Summary Expense Cards (Today, This Month, All-Time)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                CostSummaryBox(
+                    title = "අද වියදම",
+                    amount = summary.todayTotalCost,
                     color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.SemiBold
+                    modifier = Modifier.weight(1f)
+                )
+                CostSummaryBox(
+                    title = "මෙම මාසය",
+                    amount = summary.monthlyTotalCost,
+                    color = Color(0xFF10B981),
+                    modifier = Modifier.weight(1f)
+                )
+                CostSummaryBox(
+                    title = "මෙතෙක් සමස්ත",
+                    amount = summary.allTimeTotalCost,
+                    color = BadgeGold,
+                    modifier = Modifier.weight(1f)
                 )
             }
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // 3 Counts Row
+            // 3 Meal Counts & Costs Breakdown Row
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                MealCountBox(
+                MealCountAndCostBox(
                     label = "උදේ",
                     count = summary.breakfastCount,
+                    cost = summary.breakfastCost,
                     icon = Icons.Default.WbSunny,
                     color = BadgeGold,
                     modifier = Modifier.weight(1f)
                 )
-                MealCountBox(
+                MealCountAndCostBox(
                     label = "දිවා",
                     count = summary.lunchCount,
+                    cost = summary.lunchCost,
                     icon = Icons.Default.LightMode,
                     color = Color(0xFFF59E0B),
                     modifier = Modifier.weight(1f)
                 )
-                MealCountBox(
+                MealCountAndCostBox(
                     label = "රාත්‍රී",
                     count = summary.dinnerCount,
+                    cost = summary.dinnerCost,
                     icon = Icons.Default.Bedtime,
                     color = Color(0xFF6366F1),
                     modifier = Modifier.weight(1f)
                 )
             }
 
-            Spacer(modifier = Modifier.height(14.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
-            // Total & Estimated Mess Cost
+            // Total Meals Count Footer
             Surface(
-                shape = RoundedCornerShape(14.dp),
-                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(14.dp),
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column {
-                        Text(
-                            text = "මුළු ආහාර වේල් ගණන: ${summary.totalMeals}",
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer
-                        )
-                        Text(
-                            text = "ආසන්න මෙස් ගාස්තුව (වේලකට රු. $mealCostRate බැගින්)",
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
-                        )
-                    }
-
-                    val totalEst = summary.totalMeals * mealCostRate
                     Text(
-                        text = "රු. $totalEst",
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.ExtraBold,
+                        text = "මෙම මස මුළු ආහාර වේල්: ${summary.totalMeals}",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = "මෙතෙක් සමස්ත වේල්: ${summary.allTimeTotalMeals}",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.primary
                     )
                 }
@@ -547,9 +634,43 @@ fun MonthlyMessSummaryCard(
 }
 
 @Composable
-fun MealCountBox(
+fun CostSummaryBox(
+    title: String,
+    amount: Double,
+    color: Color,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(12.dp),
+        color = color.copy(alpha = 0.12f)
+    ) {
+        Column(
+            modifier = Modifier.padding(10.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = title,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = "රු. ${"%.0f".format(amount)}",
+                fontSize = 14.sp,
+                fontWeight = FontWeight.ExtraBold,
+                color = color
+            )
+        }
+    }
+}
+
+@Composable
+fun MealCountAndCostBox(
     label: String,
     count: Int,
+    cost: Double,
     icon: ImageVector,
     color: Color,
     modifier: Modifier = Modifier
@@ -563,17 +684,18 @@ fun MealCountBox(
             modifier = Modifier.padding(10.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Icon(imageVector = icon, contentDescription = null, tint = color, modifier = Modifier.size(20.dp))
-            Spacer(modifier = Modifier.height(4.dp))
+            Icon(imageVector = icon, contentDescription = null, tint = color, modifier = Modifier.size(18.dp))
+            Spacer(modifier = Modifier.height(2.dp))
             Text(
-                text = "$count",
-                fontSize = 18.sp,
+                text = "$count වේල්",
+                fontSize = 14.sp,
                 fontWeight = FontWeight.Bold,
                 color = color
             )
             Text(
-                text = label,
+                text = "රු. ${"%.0f".format(cost)}",
                 fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
@@ -583,8 +705,10 @@ fun MealCountBox(
 @Composable
 fun MonthlyMealListItem(
     record: MessRecord,
+    defaultPrice: Double,
     onViewPhoto: (path: String, title: String, compKb: Int, origKb: Int) -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onViewDaySummary: (() -> Unit)? = null
 ) {
     val mealName = when (record.mealType) {
         "BREAKFAST" -> "උදේ ආහාරය"
@@ -593,8 +717,12 @@ fun MonthlyMealListItem(
         else -> "මෙස් ආහාරය"
     }
 
+    val priceDisplay = if (record.price > 0.0) record.price else defaultPrice
+
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onViewDaySummary?.invoke() },
         shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
@@ -625,18 +753,36 @@ fun MonthlyMealListItem(
             Spacer(modifier = Modifier.width(10.dp))
 
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "$mealName • ${record.date}",
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                if (record.mealNotes.isNotBlank()) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = record.mealNotes,
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        text = "$mealName • ${record.date}",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
                     )
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (record.isTaken) {
+                        Text(
+                            text = "රු. ${"%.2f".format(priceDisplay)}",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    } else {
+                        Text(
+                            text = "නොගත්තා",
+                            fontSize = 11.sp,
+                            color = DutyOffOrange
+                        )
+                    }
+                    if (record.mealNotes.isNotBlank()) {
+                        Text(
+                            text = " • ${record.mealNotes}",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             }
 

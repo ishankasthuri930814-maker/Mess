@@ -71,6 +71,9 @@ import com.example.ui.theme.DutyOffOrange
 import com.example.util.DateTimeUtils
 import java.io.File
 
+import androidx.compose.material.icons.filled.CalendarMonth
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
+
 @Composable
 fun DutyScreen(
     viewModel: PoliceViewModel,
@@ -82,8 +85,11 @@ fun DutyScreen(
     val dutyFilter by viewModel.dutyFilter.collectAsStateWithLifecycle()
     val todayDutyHours by viewModel.todayDutyHoursFormatted.collectAsStateWithLifecycle()
     val monthlyDutyHours by viewModel.monthlyDutyHoursFormatted.collectAsStateWithLifecycle()
+    val dailyDutySummaries by viewModel.dailyDutySummaries.collectAsStateWithLifecycle()
 
     var recordToDelete by remember { mutableStateOf<DutyRecord?>(null) }
+    var selectedDaySummary by remember { mutableStateOf<DailyDutySummary?>(null) }
+    var showDailySummariesOnly by remember { mutableStateOf(false) }
 
     Scaffold(
         floatingActionButton = {
@@ -113,9 +119,18 @@ fun DutyScreen(
         ) {
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Duty Hours Counter Card
+            // Duty Hours Counter Card (Clickable to view today's daily summary)
             Card(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        val todaySummary = dailyDutySummaries.firstOrNull { it.dateKey == DateTimeUtils.getTodayKey() }
+                        if (todaySummary != null) {
+                            selectedDaySummary = todaySummary
+                        } else if (dailyDutySummaries.isNotEmpty()) {
+                            selectedDaySummary = dailyDutySummaries.first()
+                        }
+                    },
                 shape = RoundedCornerShape(14.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
             ) {
@@ -143,7 +158,7 @@ fun DutyScreen(
                         Spacer(modifier = Modifier.width(8.dp))
                         Column {
                             Text(
-                                text = "අද රාජකාරි කාලය",
+                                text = "අද රාජකාරි කාලය (සාරාංශය ->)",
                                 fontSize = 11.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -198,7 +213,7 @@ fun DutyScreen(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            // Filter Chips (Scrollable)
+            // Filter Chips (Scrollable including Daily Summary view toggle)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -206,8 +221,11 @@ fun DutyScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 FilterChip(
-                    selected = dutyFilter == DutyFilter.ALL,
-                    onClick = { viewModel.setDutyFilter(DutyFilter.ALL) },
+                    selected = !showDailySummariesOnly && dutyFilter == DutyFilter.ALL,
+                    onClick = {
+                        showDailySummariesOnly = false
+                        viewModel.setDutyFilter(DutyFilter.ALL)
+                    },
                     label = { Text("සියල්ල (${dutyList.size})") },
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = MaterialTheme.colorScheme.primary,
@@ -216,8 +234,24 @@ fun DutyScreen(
                 )
 
                 FilterChip(
-                    selected = dutyFilter == DutyFilter.ON_DUTY,
-                    onClick = { viewModel.setDutyFilter(DutyFilter.ON_DUTY) },
+                    selected = showDailySummariesOnly,
+                    onClick = { showDailySummariesOnly = !showDailySummariesOnly },
+                    label = { Text("දිනපතා සාරාංශ (${dailyDutySummaries.size})") },
+                    leadingIcon = {
+                        Icon(Icons.Default.CalendarMonth, contentDescription = null, modifier = Modifier.size(16.dp))
+                    },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = BadgeGold,
+                        selectedLabelColor = Color.White
+                    )
+                )
+
+                FilterChip(
+                    selected = !showDailySummariesOnly && dutyFilter == DutyFilter.ON_DUTY,
+                    onClick = {
+                        showDailySummariesOnly = false
+                        viewModel.setDutyFilter(DutyFilter.ON_DUTY)
+                    },
                     label = { Text("වාර්තා කිරීම් (On Duty)") },
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = DutyActiveGreen,
@@ -226,8 +260,11 @@ fun DutyScreen(
                 )
 
                 FilterChip(
-                    selected = dutyFilter == DutyFilter.EXTRA_DUTY,
-                    onClick = { viewModel.setDutyFilter(DutyFilter.EXTRA_DUTY) },
+                    selected = !showDailySummariesOnly && dutyFilter == DutyFilter.EXTRA_DUTY,
+                    onClick = {
+                        showDailySummariesOnly = false
+                        viewModel.setDutyFilter(DutyFilter.EXTRA_DUTY)
+                    },
                     label = { Text("අමතර රාජකාරි (Extra Duty)") },
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = Color(0xFF2563EB),
@@ -236,8 +273,11 @@ fun DutyScreen(
                 )
 
                 FilterChip(
-                    selected = dutyFilter == DutyFilter.OFF_DUTY,
-                    onClick = { viewModel.setDutyFilter(DutyFilter.OFF_DUTY) },
+                    selected = !showDailySummariesOnly && dutyFilter == DutyFilter.OFF_DUTY,
+                    onClick = {
+                        showDailySummariesOnly = false
+                        viewModel.setDutyFilter(DutyFilter.OFF_DUTY)
+                    },
                     label = { Text("බැහැරවීම් (Off Duty)") },
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = DutyOffOrange,
@@ -248,46 +288,86 @@ fun DutyScreen(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            // Duty Records List
-            if (dutyList.isEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(bottom = 80.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(
-                            imageVector = Icons.Default.MenuBook,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
-                            modifier = Modifier.size(64.dp)
-                        )
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Text(
-                            text = if (searchQuery.isNotBlank()) "සෙවුමට ගැළපෙන සටහන් නැත" else "තවම රාජකාරි සටහන් කිසිවක් නැත",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.Medium
-                        )
+            // Main Content Area (Daily Summaries View vs Individual Duty Records View)
+            if (showDailySummariesOnly) {
+                if (dailyDutySummaries.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(bottom = 80.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("දිනපතා සාරාංශ සටහන් කිසිවක් නැත", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                        contentPadding = PaddingValues(bottom = 90.dp)
+                    ) {
+                        items(dailyDutySummaries, key = { it.dateKey }) { daySummary ->
+                            DailyDutySummaryItemCard(
+                                summary = daySummary,
+                                onClick = { selectedDaySummary = daySummary }
+                            )
+                        }
                     }
                 }
             } else {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                    contentPadding = PaddingValues(bottom = 90.dp)
-                ) {
-                    items(dutyList, key = { it.id }) { record ->
-                        DutyItemCard(
-                            record = record,
-                            onViewPhoto = onViewPhoto,
-                            onDelete = { recordToDelete = record }
-                        )
+                if (dutyList.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(bottom = 80.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(
+                                imageVector = Icons.Default.MenuBook,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                                modifier = Modifier.size(64.dp)
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text(
+                                text = if (searchQuery.isNotBlank()) "සෙවුමට ගැළපෙන සටහන් නැත" else "තවම රාජකාරි සටහන් කිසිවක් නැත",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        contentPadding = PaddingValues(bottom = 90.dp)
+                    ) {
+                        items(dutyList, key = { it.id }) { record ->
+                            val recordDateKey = DateTimeUtils.formatDate(record.timestamp)
+                            DutyItemCard(
+                                record = record,
+                                onViewPhoto = onViewPhoto,
+                                onDelete = { recordToDelete = record },
+                                onViewDaySummary = {
+                                    val summary = dailyDutySummaries.firstOrNull { it.dateKey == recordDateKey }
+                                    if (summary != null) selectedDaySummary = summary
+                                }
+                            )
+                        }
                     }
                 }
             }
         }
+    }
+
+    // Day Duty Summary Dialog
+    selectedDaySummary?.let { summary ->
+        DayDutySummaryDialog(
+            summary = summary,
+            onDismiss = { selectedDaySummary = null },
+            onViewPhoto = onViewPhoto
+        )
     }
 
     // Delete confirmation dialog
@@ -320,7 +400,8 @@ fun DutyScreen(
 fun DutyItemCard(
     record: DutyRecord,
     onViewPhoto: (path: String, title: String, compKb: Int, origKb: Int) -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onViewDaySummary: (() -> Unit)? = null
 ) {
     val isExtraDuty = record.type == "EXTRA_DUTY"
     val isOnDuty = record.type == "ON_DUTY"
@@ -625,6 +706,116 @@ fun DutyItemCard(
                         color = BadgeGold
                     )
                 }
+            }
+        }
+    }
+}
+
+@Composable
+fun DailyDutySummaryItemCard(
+    summary: DailyDutySummary,
+    onClick: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() }
+            .testTag("daily_summary_card_${summary.dateKey}"),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .background(BadgeGold.copy(alpha = 0.2f), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CalendarMonth,
+                            contentDescription = null,
+                            tint = BadgeGold,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Column {
+                        Text(
+                            text = summary.formattedDate,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "සටහන් ${summary.allRecords.size} ක් • ඡායාරූප ${summary.totalPhotosCount}",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = DutyActiveGreen.copy(alpha = 0.15f)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.AccessTime,
+                            contentDescription = null,
+                            tint = DutyActiveGreen,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = summary.totalHoursFormatted,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = DutyActiveGreen
+                        )
+                    }
+                }
+            }
+
+            // Badges for ON, OFF, and EXTRA duty counts
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (summary.onDutyRecord != null) {
+                    Surface(shape = RoundedCornerShape(6.dp), color = DutyActiveGreen.copy(alpha = 0.15f)) {
+                        Text("On Duty: ${DateTimeUtils.formatTime(summary.onDutyRecord.timestamp)}", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = DutyActiveGreen, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
+                    }
+                }
+
+                if (summary.offDutyRecord != null) {
+                    Surface(shape = RoundedCornerShape(6.dp), color = DutyOffOrange.copy(alpha = 0.15f)) {
+                        Text("Off Duty: ${DateTimeUtils.formatTime(summary.offDutyRecord.timestamp)}", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = DutyOffOrange, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
+                    }
+                }
+
+                if (summary.extraDutyRecords.isNotEmpty()) {
+                    Surface(shape = RoundedCornerShape(6.dp), color = Color(0xFF2563EB).copy(alpha = 0.15f)) {
+                        Text("අමතර රාජකාරි ${summary.extraDutyRecords.size}", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2563EB), modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
+                    }
+                }
+
+                Spacer(modifier = Modifier.weight(1f))
+                Text("විස්තර බලන්න >", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
             }
         }
     }

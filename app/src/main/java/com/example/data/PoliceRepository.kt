@@ -63,7 +63,7 @@ class PoliceRepository(private val dao: PoliceDao) {
         return dao.getMessRecordsForMonth(monthPrefix)
     }
 
-    suspend fun toggleMealTaken(date: String, mealType: String, isTaken: Boolean) {
+    suspend fun toggleMealTaken(date: String, mealType: String, isTaken: Boolean, defaultPrice: Double = 0.0) {
         val existing = dao.findMessRecord(date, mealType)
         if (existing != null) {
             dao.updateMessRecord(existing.copy(isTaken = isTaken))
@@ -73,6 +73,7 @@ class PoliceRepository(private val dao: PoliceDao) {
                     date = date,
                     mealType = mealType,
                     isTaken = isTaken,
+                    price = defaultPrice,
                     timestamp = System.currentTimeMillis()
                 )
             )
@@ -84,6 +85,7 @@ class PoliceRepository(private val dao: PoliceDao) {
         mealType: String,
         isTaken: Boolean,
         notes: String,
+        price: Double,
         photoPath: String?,
         compressedSizeKb: Int
     ) {
@@ -93,6 +95,7 @@ class PoliceRepository(private val dao: PoliceDao) {
                 existing.copy(
                     isTaken = isTaken,
                     mealNotes = notes,
+                    price = price,
                     photoPath = photoPath ?: existing.photoPath,
                     compressedSizeKb = if (photoPath != null) compressedSizeKb else existing.compressedSizeKb
                 )
@@ -104,6 +107,7 @@ class PoliceRepository(private val dao: PoliceDao) {
                     mealType = mealType,
                     isTaken = isTaken,
                     mealNotes = notes,
+                    price = price,
                     photoPath = photoPath,
                     compressedSizeKb = compressedSizeKb,
                     timestamp = System.currentTimeMillis()

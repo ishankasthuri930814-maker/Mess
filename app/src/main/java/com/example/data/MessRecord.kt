@@ -10,6 +10,7 @@ data class MessRecord(
     val mealType: String, // "BREAKFAST", "LUNCH", "DINNER"
     val isTaken: Boolean = true,
     val mealNotes: String = "",
+    val price: Double = 0.0,
     val photoPath: String? = null,
     val compressedSizeKb: Int = 0,
     val timestamp: Long = System.currentTimeMillis()
