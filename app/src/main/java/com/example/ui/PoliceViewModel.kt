@@ -45,6 +45,12 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlin.math.max
 
+enum class AuthPortal {
+    CHOOSER,
+    OIC,
+    OFFICER
+}
+
 enum class DutyFilter {
     ALL,
     ON_DUTY,
@@ -125,6 +131,14 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
     private val _isOICLoggedIn = MutableStateFlow(prefs.getBoolean("is_oic_logged_in", false))
     val isOICLoggedIn: StateFlow<Boolean> = _isOICLoggedIn.asStateFlow()
 
+    // Portal chooser: CHOOSER, OIC, OFFICER
+    private val _authPortal = MutableStateFlow(AuthPortal.CHOOSER)
+    val authPortal: StateFlow<AuthPortal> = _authPortal.asStateFlow()
+
+    fun setAuthPortal(portal: AuthPortal) {
+        _authPortal.value = portal
+    }
+
     private val auth = Firebase.auth
     private val STOP_TIMEOUT_MILLIS = 5000L
 
@@ -140,8 +154,8 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
     // --- Subordinates (for OIC) ---
     @OptIn(ExperimentalCoroutinesApi::class)
     val subordinates: StateFlow<List<AppUser>> = _appUser.flatMapLatest { user ->
-        if (user?.role == "OIC") {
-            repository.observeSubordinates(user.email)
+        if (user?.role == "OIC" && user.oicStationCode != null) {
+            repository.observeSubordinates(user.oicStationCode!!)
         } else {
             flow { emit(emptyList<AppUser>()) }
         }
@@ -185,33 +199,86 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
                     _isOICLoggedIn.value = user.role == "OIC"
                     prefs.edit().putBoolean("is_registered", _isRegistered.value).commit()
                     prefs.edit().putBoolean("is_oic_logged_in", _isOICLoggedIn.value).commit()
+                    if (user.role == "OFFICER") {
+                        repository.saveOfficerProfile(
+                            OfficerProfile(
+                                name = user.displayName,
+                                rank = user.rank.ifBlank { "Police Constable" },
+                                badgeNumber = user.badgeNumber,
+                                station = user.oicStationCode ?: ""
+                            )
+                        )
+                    }
                     updateLocationTracking(user)
                 }
             }
         }
     }
 
+    fun refreshCurrentLocation(showFeedback: Boolean = false) {
+        val user = _appUser.value ?: return
+        if (user.role != "OFFICER") return
+        viewModelScope.launch(Dispatchers.IO) {
+            val hasFine = androidx.core.content.ContextCompat.checkSelfPermission(
+                getApplication(),
+                android.Manifest.permission.ACCESS_FINE_LOCATION
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+            val hasCoarse = androidx.core.content.ContextCompat.checkSelfPermission(
+                getApplication(),
+                android.Manifest.permission.ACCESS_COARSE_LOCATION
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+            if (!hasFine && !hasCoarse) {
+                if (showFeedback) {
+                    _userMessage.emit("GPS අවසරය ලබාදී නොමැත.")
+                }
+                return@launch
+            }
+
+            try {
+                var loc: android.location.Location? = null
+                try {
+                    loc = fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null).await()
+                } catch (e: Exception) {
+                    // ignore
+                }
+                if (loc == null) {
+                    try {
+                        loc = fusedLocationClient.lastLocation.await()
+                    } catch (e: Exception) {
+                        // ignore
+                    }
+                }
+                if (loc != null) {
+                    repository.updateLastLocation(user.uid, loc.latitude, loc.longitude, user.isOnDuty)
+                    if (showFeedback) {
+                        _userMessage.emit("GPS ස්ථානය සාර්ථකව යාවත්කාලීන විය (${String.format("%.4f", loc.latitude)}, ${String.format("%.4f", loc.longitude)}).")
+                    }
+                } else if (showFeedback) {
+                    _userMessage.emit("GPS ස්ථානය ලබා ගැනීමට නොහැකි විය. කරුණාකර GPS සක්‍රිය කරන්න.")
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
     private fun updateLocationTracking(user: AppUser) {
         locationJob?.cancel()
-        if (user.role == "OFFICER" && user.status == "APPROVED" && user.isOnDuty) {
+        if (user.role == "OFFICER" && user.status == "APPROVED") {
             locationJob = viewModelScope.launch(Dispatchers.IO) {
-                while (true) {
-                    try {
-                        val locationResult = fusedLocationClient.getCurrentLocation(Priority.PRIORITY_BALANCED_POWER_ACCURACY, null).await()
-                        if (locationResult != null) {
-                            repository.updateLastLocation(user.uid, locationResult.latitude, locationResult.longitude, user.isOnDuty)
-                        }
-                    } catch (e: Exception) {
-                        e.printStackTrace()
-                    }
-                    delay(60000) // Update every minute
+                refreshCurrentLocation()
+                while (user.isOnDuty) {
+                    delay(30000) // Update every 30 seconds while on duty
+                    refreshCurrentLocation()
                 }
             }
         }
     }
 
-    fun registerOfficer(officerName: String, oicEmail: String) {
+    fun registerOfficer(officerName: String, badgeNumber: String = "", rank: String = "", stationCode: String) {
         val user = auth.currentUser ?: return
+        val code = stationCode.trim().uppercase()
         viewModelScope.launch {
             val appUser = AppUser(
                 uid = user.uid,
@@ -219,36 +286,59 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
                 email = user.email ?: "",
                 role = "OFFICER",
                 status = "PENDING",
-                oicEmail = oicEmail.trim().lowercase()
+                badgeNumber = badgeNumber.trim(),
+                rank = rank.trim(),
+                oicStationCode = code
             )
             repository.saveUser(appUser)
+            repository.saveOfficerProfile(
+                OfficerProfile(
+                    name = officerName,
+                    rank = rank.ifBlank { "Police Constable" },
+                    badgeNumber = badgeNumber,
+                    station = code
+                )
+            )
+            _appUser.value = appUser
             _isRegistered.value = true
             prefs.edit().putBoolean("is_registered", true).commit()
-            _userMessage.emit("ලියාපදිංචි වීමේ ඉල්ලීම OIC වෙත යොමු කරන ලදී.")
+            _userMessage.emit("ලියාපදිංචි වීමේ ඉල්ලීම OIC වෙත යොමු කරන ලදී ($code).")
         }
     }
 
-    fun registerOIC(oicName: String) {
+    fun registerOIC(oicName: String, stationName: String = "", customCode: String = "") {
         val user = auth.currentUser ?: return
+        val finalCode = if (customCode.isNotBlank()) customCode.trim().uppercase() else generateSuggestedOicCode(stationName)
         viewModelScope.launch {
             val appUser = AppUser(
                 uid = user.uid,
                 displayName = oicName,
                 email = user.email ?: "",
                 role = "OIC",
-                status = "APPROVED" 
+                status = "APPROVED",
+                stationName = stationName.trim(),
+                oicStationCode = finalCode
             )
             repository.saveUser(appUser)
+            _appUser.value = appUser
             _isOICLoggedIn.value = true
+            _isRegistered.value = true
+            prefs.edit().putBoolean("is_registered", true).commit()
             prefs.edit().putBoolean("is_oic_logged_in", true).commit()
-            _userMessage.emit("OIC ලෙස සාර්ථකව ලියාපදිංචි විය.")
+            _userMessage.emit("OIC ලෙස සාර්ථකව ලියාපදිංචි විය. ඔබගේ OIC කේතය: $finalCode")
         }
+    }
+
+    fun generateSuggestedOicCode(station: String): String {
+        val clean = station.trim().uppercase().replace("[^A-Z]".toRegex(), "").take(4)
+        val rand = (1000..9999).random()
+        return if (clean.isNotBlank()) "OIC-$clean-$rand" else "OIC-$rand"
     }
 
     fun approveOfficer(officerUid: String) {
         viewModelScope.launch {
             repository.updateOfficerStatus(officerUid, "APPROVED")
-            _userMessage.emit("නිලධාරියා අනුමත කරන ලදී.")
+            _userMessage.emit("නිලධාරියා සාර්ථකව අනුමත කරන ලදී.")
         }
     }
 
@@ -263,6 +353,8 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
         auth.signOut()
         _isRegistered.value = false
         _isOICLoggedIn.value = false
+        _appUser.value = null
+        _authPortal.value = AuthPortal.CHOOSER
         prefs.edit().clear().commit()
     }
 
@@ -658,7 +750,7 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
                 type = type,
                 timestamp = timestamp,
                 officerId = auth.currentUser?.uid ?: "",
-                oicEmail = appUser.value?.oicEmail ?: "",
+                oicStationCode = appUser.value?.oicStationCode ?: "",
                 ibPage = ibPage.trim(),
                 ibParagraph = ibParagraph.trim(),
                 dutyNature = dutyNature.trim(),
@@ -675,7 +767,8 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
             if (type == "ON_DUTY" || type == "OFF_DUTY") {
                 val isOnDuty = type == "ON_DUTY"
                 auth.currentUser?.let { user ->
-                    repository.updateLastLocation(user.uid, 0.0, 0.0, isOnDuty) // Trigger sync for duty status
+                    repository.updateDutyStatus(user.uid, isOnDuty)
+                    refreshCurrentLocation()
                 }
             }
 
@@ -845,7 +938,7 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
             
             val messRecord = MessRecord(
                 officerId = auth.currentUser?.uid ?: "",
-                oicEmail = appUser.value?.oicEmail ?: "",
+                oicStationCode = appUser.value?.oicStationCode ?: "",
                 date = date,
                 mealType = mealType,
                 isTaken = isTaken,

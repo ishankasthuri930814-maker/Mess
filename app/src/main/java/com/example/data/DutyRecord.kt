@@ -13,7 +13,7 @@ import com.google.firebase.firestore.ServerTimestamp
 data class DutyRecord(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val officerId: String = "",
-    val oicEmail: String = "",
+    val oicStationCode: String = "",
     val type: String = "", // "ON_DUTY", "OFF_DUTY", "EXTRA_DUTY"
     val timestamp: Long = System.currentTimeMillis(),
     val ibPage: String = "",

@@ -27,10 +27,6 @@ service cloud.firestore {
       return isSignedIn() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'OIC';
     }
 
-    function isSubordinateOf(oicEmail) {
-      return isSignedIn() && request.auth.token.email == oicEmail;
-    }
-
     function isValidUser(data) {
       return data.uid is string &&
              data.displayName is string &&
@@ -38,36 +34,39 @@ service cloud.firestore {
              data.role in ['OFFICER', 'OIC'] &&
              data.status in ['PENDING', 'APPROVED', 'REJECTED'] &&
              (!('oicEmail' in data) || data.oicEmail is string) &&
+             (!('oicStationCode' in data) || data.oicStationCode is string) &&
+             (!('stationName' in data) || data.stationName is string) &&
+             (!('badgeNumber' in data) || data.badgeNumber is string) &&
+             (!('rank' in data) || data.rank is string) &&
              (!('isOnDuty' in data) || data.isOnDuty is bool) &&
              (!('lastLocation' in data) || data.lastLocation is map) &&
              (!('updatedAt' in data) || data.updatedAt is timestamp);
     }
 
     match /users/{userId} {
-      allow get: if isOwner(userId) || (isSignedIn() && existing().oicEmail == request.auth.token.email);
-      allow list: if isSignedIn() && (request.auth.uid == userId || resource.data.oicEmail == request.auth.token.email);
+      allow get: if isSignedIn();
+      allow list: if isSignedIn();
       
       allow create: if isOwner(userId) && 
                        incoming().uid == userId &&
                        incoming().role in ['OFFICER', 'OIC'] &&
-                       incoming().status == 'PENDING' &&
+                       incoming().status in ['PENDING', 'APPROVED'] &&
                        isValidUser(incoming());
       
       allow update: if (isOwner(userId) && 
                         incoming().uid == existing().uid &&
                         incoming().role == existing().role &&
                         incoming().email == existing().email &&
-                        (incoming().status == existing().status || existing().status == 'REJECTED') &&
                         isValidUser(incoming())) ||
-                       (isOIC() && 
-                        existing().oicEmail == request.auth.token.email &&
+                       (isSignedIn() && 
                         incoming().diff(existing()).affectedKeys().hasOnly(['status']) &&
                         incoming().status in ['APPROVED', 'REJECTED']);
     }
 
     function isValidDutyRecord(data) {
       return data.officerId is string &&
-             data.oicEmail is string &&
+             (!('oicEmail' in data) || data.oicEmail is string) &&
+             (!('oicStationCode' in data) || data.oicStationCode is string) &&
              data.type in ['ON_DUTY', 'OFF_DUTY', 'EXTRA_DUTY'] &&
              data.timestamp is number &&
              (!('ibPage' in data) || data.ibPage is string) &&
@@ -77,11 +76,11 @@ service cloud.firestore {
              (!('photoPath' in data) || data.photoPath is string) &&
              (!('scenePhotoPath' in data) || data.scenePhotoPath is string) &&
              (!('dutyDurationMinutes' in data) || data.dutyDurationMinutes is number) &&
-             data.createdAt is timestamp;
+             (!('createdAt' in data) || data.createdAt is timestamp);
     }
 
     match /duty_records/{recordId} {
-      allow read: if isSignedIn() && (resource.data.officerId == request.auth.uid || resource.data.oicEmail == request.auth.token.email);
+      allow read: if isSignedIn();
       allow create: if isSignedIn() && 
                        incoming().officerId == request.auth.uid &&
                        isValidDutyRecord(incoming());
@@ -94,7 +93,8 @@ service cloud.firestore {
 
     function isValidMessRecord(data) {
       return data.officerId is string &&
-             data.oicEmail is string &&
+             (!('oicEmail' in data) || data.oicEmail is string) &&
+             (!('oicStationCode' in data) || data.oicStationCode is string) &&
              data.date is string &&
              data.mealType in ['BREAKFAST', 'LUNCH', 'DINNER'] &&
              data.isTaken is bool &&
@@ -102,11 +102,11 @@ service cloud.firestore {
              (!('mealNotes' in data) || data.mealNotes is string) &&
              (!('photoPath' in data) || data.photoPath is string) &&
              data.timestamp is number &&
-             data.createdAt is timestamp;
+             (!('createdAt' in data) || data.createdAt is timestamp);
     }
 
     match /mess_records/{recordId} {
-      allow read: if isSignedIn() && (resource.data.officerId == request.auth.uid || resource.data.oicEmail == request.auth.token.email);
+      allow read: if isSignedIn();
       allow create: if isSignedIn() && 
                        incoming().officerId == request.auth.uid &&
                        isValidMessRecord(incoming());

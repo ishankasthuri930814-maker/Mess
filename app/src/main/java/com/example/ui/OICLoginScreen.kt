@@ -2,9 +2,13 @@ package com.example.ui
 
 import android.app.Activity
 import android.util.Log
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -16,13 +20,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.credentials.ClearCredentialStateRequest
 import androidx.credentials.CredentialManager
 import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
 import com.example.R
 import com.example.ui.theme.BadgeGold
+import com.example.ui.theme.PoliceNavyDark
 import com.example.ui.theme.PoliceNavyPrimary
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
@@ -31,13 +35,13 @@ import com.google.firebase.Firebase
 import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.auth.auth
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
-import kotlinx.coroutines.withContext
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun OICLoginScreen(
+    onBack: () -> Unit = {},
     onLoginSuccess: () -> Unit
 ) {
     val context = LocalContext.current
@@ -46,64 +50,93 @@ fun OICLoginScreen(
     var isLoading by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
-    Surface(
-        modifier = Modifier.fillMaxSize(),
-        color = MaterialTheme.colorScheme.background
-    ) {
-        Column(
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("ස්ථානාධිපති පිවිසුම (OIC Portal)") },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "ආපසු (Back)"
+                        )
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = PoliceNavyDark,
+                    titleContentColor = BadgeGold,
+                    navigationIconContentColor = Color.White
+                )
+            )
+        }
+    ) { padding ->
+        Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(24.dp),
-            verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally
+                .padding(padding)
+                .background(MaterialTheme.colorScheme.background),
+            contentAlignment = Alignment.Center
         ) {
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(16.dp),
+                    .padding(24.dp),
                 shape = RoundedCornerShape(24.dp),
-                elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+                elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
+                colors = CardDefaults.cardColors(containerColor = PoliceNavyDark)
             ) {
                 Column(
-                    modifier = Modifier.padding(32.dp),
+                    modifier = Modifier.padding(28.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Shield,
-                        contentDescription = null,
-                        tint = PoliceNavyPrimary,
-                        modifier = Modifier.size(80.dp)
-                    )
-                    Spacer(modifier = Modifier.height(24.dp))
-                    Text(
-                        text = "All In One Police",
-                        fontSize = 24.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = PoliceNavyPrimary
-                    )
-                    Text(
-                        text = "ශ්‍රී ලංකා පොලීසිය",
-                        fontSize = 16.sp,
-                        color = BadgeGold,
-                        fontWeight = FontWeight.Medium
-                    )
-                    Spacer(modifier = Modifier.height(48.dp))
+                    Box(
+                        modifier = Modifier
+                            .size(76.dp)
+                            .background(BadgeGold.copy(alpha = 0.2f), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Security,
+                            contentDescription = null,
+                            tint = BadgeGold,
+                            modifier = Modifier.size(44.dp)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(18.dp))
 
                     Text(
-                        text = "පිවිසීම සඳහා ඔබගේ Google ගිණුම භාවිතා කරන්න.",
-                        fontSize = 14.sp,
-                        textAlign = TextAlign.Center,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        text = "ස්ථානාධිපති පිවිසුම",
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
                     )
-                    
-                    Spacer(modifier = Modifier.height(32.dp))
+                    Text(
+                        text = "OIC Chief Portal",
+                        fontSize = 14.sp,
+                        color = BadgeGold,
+                        fontWeight = FontWeight.SemiBold
+                    )
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    Text(
+                        text = "ස්ථානාධිපතිවරුන් (OIC) සඳහා පමණි. ඔබගේ Google ගිණුමෙන් පිවිසීමෙන් පසු ඔබගේ ස්ථානය සඳහා අනන්‍ය OIC කේතය (Station Code) කළමනාකරණය කරගත හැක.",
+                        fontSize = 13.sp,
+                        textAlign = TextAlign.Center,
+                        color = Color.White.copy(alpha = 0.85f),
+                        lineHeight = 18.sp
+                    )
+
+                    Spacer(modifier = Modifier.height(28.dp))
 
                     if (errorMessage != null) {
                         Text(
                             text = errorMessage!!,
                             color = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.padding(bottom = 16.dp),
-                            fontSize = 12.sp
+                            fontSize = 12.sp,
+                            modifier = Modifier.padding(bottom = 14.dp),
+                            textAlign = TextAlign.Center
                         )
                     }
 
@@ -111,86 +144,51 @@ fun OICLoginScreen(
                         onClick = {
                             isLoading = true
                             errorMessage = null
-                            onGoogleSignInClicked(
+                            launchGoogleSignIn(
                                 context = context,
                                 credentialManager = credentialManager,
+                                scope = coroutineScope,
                                 onAuthSuccess = {
                                     isLoading = false
                                     onLoginSuccess()
                                 },
-                                onAuthError = { error ->
+                                onAuthError = { err: String ->
                                     isLoading = false
-                                    errorMessage = error
+                                    errorMessage = err
                                 },
-                                scope = coroutineScope,
-                                onAuthCancelled = {
-                                    isLoading = false
-                                }
+                                onAuthCancelled = { isLoading = false }
                             )
                         },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(56.dp),
-                        shape = RoundedCornerShape(28.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = PoliceNavyPrimary),
+                            .height(52.dp),
+                        shape = RoundedCornerShape(26.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = BadgeGold),
                         enabled = !isLoading
                     ) {
                         if (isLoading) {
                             CircularProgressIndicator(
                                 modifier = Modifier.size(24.dp),
-                                color = Color.White,
+                                color = PoliceNavyDark,
                                 strokeWidth = 2.dp
                             )
                         } else {
                             Text(
-                                "Google සමඟ පිවිසෙන්න",
+                                "Google සමඟ OIC පිවිසුම",
                                 fontWeight = FontWeight.Bold,
-                                fontSize = 16.sp
+                                fontSize = 15.sp,
+                                color = PoliceNavyDark
                             )
                         }
                     }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    TextButton(onClick = onBack) {
+                        Text("පොලිස් නිලධාරී පිවිසුම වෙත යන්න", color = Color.White.copy(alpha = 0.8f))
+                    }
                 }
             }
-        }
-    }
-}
-
-fun onGoogleSignInClicked(
-    context: android.content.Context,
-    credentialManager: CredentialManager,
-    onAuthSuccess: () -> Unit,
-    onAuthError: (String) -> Unit,
-    scope: CoroutineScope,
-    onAuthCancelled: () -> Unit = {}
-) {
-    val clientId = try {
-        context.getString(R.string.default_web_client_id)
-    } catch (e: Exception) {
-        onAuthError("Google Sign-In configuration missing")
-        return
-    }
-
-    val signInOption = GetSignInWithGoogleOption.Builder(serverClientId = clientId).build()
-    val request = GetCredentialRequest.Builder().addCredentialOption(signInOption).build()
-
-    scope.launch {
-        try {
-            val result = credentialManager.getCredential(context as Activity, request)
-            val credential = result.credential
-            if (credential is CustomCredential && credential.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
-                val googleIdToken = GoogleIdTokenCredential.createFrom(credential.data).idToken
-                val authCredential = GoogleAuthProvider.getCredential(googleIdToken, null)
-                Firebase.auth.signInWithCredential(authCredential).await()
-                onAuthSuccess()
-            } else {
-                onAuthError("Unexpected credential type")
-            }
-        } catch (e: GetCredentialCancellationException) {
-            Log.w("Auth", "Google Sign-In cancelled: ${e.message}")
-            onAuthCancelled()
-        } catch (e: Exception) {
-            Log.e("Auth", "Google Sign-In failed", e)
-            onAuthError(e.localizedMessage ?: "Sign in failed")
         }
     }
 }

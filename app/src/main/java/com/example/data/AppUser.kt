@@ -13,6 +13,10 @@ data class AppUser(
     val role: String = "OFFICER", // "OFFICER", "OIC"
     val status: String = "PENDING", // "PENDING", "APPROVED", "REJECTED"
     val oicEmail: String = "",
+    val oicStationCode: String? = null,
+    val stationName: String = "",
+    val badgeNumber: String = "",
+    val rank: String = "",
     val isOnDuty: Boolean = false,
     val lastLocation: Map<String, Any>? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null

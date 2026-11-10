@@ -12,7 +12,7 @@ import com.google.firebase.firestore.ServerTimestamp
 data class MessRecord(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val officerId: String = "",
-    val oicEmail: String = "",
+    val oicStationCode: String = "",
     val date: String = "", // yyyy-MM-dd
     val mealType: String = "", // "BREAKFAST", "LUNCH", "DINNER"
     val isTaken: Boolean = true,

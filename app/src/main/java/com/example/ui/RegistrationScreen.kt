@@ -9,6 +9,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.style.TextAlign
 import com.example.ui.theme.DutyActiveGreen
 
 @Composable
@@ -16,7 +17,7 @@ fun RegistrationScreen(
     viewModel: PoliceViewModel
 ) {
     var officerName by remember { mutableStateOf("") }
-    var oicEmail by remember { mutableStateOf("") }
+    var stationCode by remember { mutableStateOf("") }
     var isSubmitting by remember { mutableStateOf(false) }
     var isOICMode by remember { mutableStateOf(false) }
 
@@ -35,9 +36,10 @@ fun RegistrationScreen(
         )
         Spacer(modifier = Modifier.height(8.dp))
         Text(
-            text = if (isOICMode) "OICවරයෙකු ලෙස ලියාපදිංචි වීමට විස්තර ඇතුළත් කරන්න." else "ඔබේ OICවරයා තහවුරු කිරීමට විස්තර ඇතුළත් කරන්න.",
+            text = if (isOICMode) "OICවරයෙකු ලෙස ලියාපදිංචි වීමට ඔබේ ස්ථාන කේතය (Station Code) ඇතුළත් කරන්න." else "ඔබේ OICවරයාගේ ස්ථාන කේතය (Station Code) ඇතුළත් කරන්න.",
             fontSize = 14.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center
         )
         Spacer(modifier = Modifier.height(32.dp))
 
@@ -49,16 +51,14 @@ fun RegistrationScreen(
             shape = RoundedCornerShape(12.dp)
         )
         
-        if (!isOICMode) {
-            Spacer(modifier = Modifier.height(16.dp))
-            OutlinedTextField(
-                value = oicEmail,
-                onValueChange = { oicEmail = it },
-                label = { Text("OICවරයාගේ විද්‍යුත් තැපෑල (Email)") },
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp)
-            )
-        }
+        Spacer(modifier = Modifier.height(16.dp))
+        OutlinedTextField(
+            value = stationCode,
+            onValueChange = { stationCode = it },
+            label = { Text(if (isOICMode) "අලුත් ස්ථාන කේතයක් (Station Code)" else "OICගේ ස්ථාන කේතය (Station Code)") },
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp)
+        )
 
         Spacer(modifier = Modifier.height(32.dp))
 
@@ -66,12 +66,12 @@ fun RegistrationScreen(
             onClick = {
                 isSubmitting = true
                 if (isOICMode) {
-                    viewModel.registerOIC(officerName)
+                    viewModel.registerOIC(officerName, stationCode)
                 } else {
-                    viewModel.registerOfficer(officerName, oicEmail)
+                    viewModel.registerOfficer(officerName = officerName, stationCode = stationCode)
                 }
             },
-            enabled = officerName.isNotBlank() && (isOICMode || oicEmail.isNotBlank()) && !isSubmitting,
+            enabled = officerName.isNotBlank() && stationCode.isNotBlank() && !isSubmitting,
             modifier = Modifier.fillMaxWidth().height(50.dp),
             shape = RoundedCornerShape(12.dp),
             colors = ButtonDefaults.buttonColors(containerColor = DutyActiveGreen)

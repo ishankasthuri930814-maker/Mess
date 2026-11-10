@@ -43,8 +43,8 @@ class PoliceRepository(
         db.collection("users").document(user.uid).set(user).await()
     }
 
-    fun observeSubordinates(oicEmail: String): Flow<List<AppUser>> = db.collection("users")
-        .whereEqualTo("oicEmail", oicEmail)
+    fun observeSubordinates(oicStationCode: String): Flow<List<AppUser>> = db.collection("users")
+        .whereEqualTo("oicStationCode", oicStationCode)
         .snapshots()
         .map { it.toObjects(AppUser::class.java) }
 
@@ -70,16 +70,22 @@ class PoliceRepository(
         db.collection("mess_records").document().set(record).await()
     }
 
+    suspend fun updateDutyStatus(uid: String, isOnDuty: Boolean) {
+        db.collection("users").document(uid).update("isOnDuty", isOnDuty).await()
+    }
+
     suspend fun updateLastLocation(uid: String, lat: Double, lng: Double, isOnDuty: Boolean) {
-        val location = mapOf(
-            "lat" to lat,
-            "lng" to lng,
-            "timestamp" to System.currentTimeMillis()
+        val updates = mutableMapOf<String, Any>(
+            "isOnDuty" to isOnDuty
         )
-        db.collection("users").document(uid).update(
-            "lastLocation", location,
-            "isOnDuty", isOnDuty
-        ).await()
+        if (lat != 0.0 || lng != 0.0) {
+            updates["lastLocation"] = mapOf(
+                "lat" to lat,
+                "lng" to lng,
+                "timestamp" to System.currentTimeMillis()
+            )
+        }
+        db.collection("users").document(uid).update(updates).await()
     }
 
     fun searchDutyRecords(query: String): Flow<List<DutyRecord>> {

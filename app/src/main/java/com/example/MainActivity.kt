@@ -1,12 +1,17 @@
 package com.example
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -29,6 +34,7 @@ import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.MenuBook
+import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Restaurant
@@ -81,13 +87,21 @@ import com.example.ui.DutyEntryDialog
 import com.example.ui.DutyScreen
 import com.example.ui.MealEntryDialog
 import com.example.ui.MessScreen
+import com.example.ui.AuthPortal
+import com.example.ui.AuthPortalScreen
 import com.example.ui.OICLoginScreen
+import com.example.ui.OfficerLoginScreen
+import com.example.ui.OICRegistrationScreen
+import com.example.ui.OfficerRegistrationScreen
+import com.example.ui.OICDashboardScreen
+import com.example.ui.PendingApprovalScreen
 import com.example.ui.PhotoViewerDialog
 import com.example.ui.PoliceViewModel
 import com.example.ui.PoliceViewModelFactory
 import com.example.ui.ProfileScreen
 import com.example.ui.RegistrationScreen
 import com.example.ui.RunningChartScreen
+import androidx.compose.material.icons.filled.Close
 import com.example.ui.theme.BadgeGold
 import com.example.ui.theme.DutyActiveGreen
 import com.example.ui.theme.DutyOffOrange
@@ -145,113 +159,102 @@ fun MainPoliceApp(viewModel: PoliceViewModel, isDarkTheme: Boolean) {
     val appUser by viewModel.appUser.collectAsStateWithLifecycle()
     val isRegistered by viewModel.isRegistered.collectAsStateWithLifecycle()
     val isOICLoggedIn by viewModel.isOICLoggedIn.collectAsStateWithLifecycle()
+    val authPortal by viewModel.authPortal.collectAsStateWithLifecycle()
 
+    // 1. Not signed in with Google -> Show distinct portals
     if (currentUser == null) {
-        OICLoginScreen(onLoginSuccess = { /* Handled by AuthStateListener in VM */ })
-        return
-    }
-
-    if (!isRegistered && appUser?.role != "OIC") {
-        RegistrationScreen(viewModel = viewModel)
-        return
-    }
-
-    if (appUser?.role == "OFFICER" && appUser?.status == "PENDING") {
-        Scaffold { padding ->
-            Box(modifier = Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(24.dp)) {
-                    Icon(Icons.Default.Security, contentDescription = null, tint = BadgeGold, modifier = Modifier.size(64.dp))
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text("ලියාපදිංචිය තහවුරු වෙමින් පවතී...", fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text("ඔබගේ OIC (${appUser?.oicEmail}) විසින් මෙය තහවුරු කළ පසු ඔබට ඇප් එක භාවිතා කළ හැක.", textAlign = TextAlign.Center)
-                    Spacer(modifier = Modifier.height(32.dp))
-                    Button(onClick = { viewModel.logout() }) { Text("ලොග් අවුට් වන්න") }
-                }
-            }
-        }
-        return
-    }
-
-    if (isOICLoggedIn) {
-        val snackbarHostState = remember { SnackbarHostState() }
-        // Simple OIC Dashboard
-        Scaffold(snackbarHost = { SnackbarHost(snackbarHostState) }) { padding ->
-            Column(modifier = Modifier.fillMaxSize().padding(padding)) {
-                TopAppBar(
-                    title = { Text("OIC Dashboard") },
-                    actions = {
-                        IconButton(onClick = { viewModel.logout() }) {
-                            Icon(Icons.Default.Person, contentDescription = "Logout")
-                        }
-                    }
+        when (authPortal) {
+            AuthPortal.CHOOSER -> {
+                AuthPortalScreen(
+                    onSelectOIC = { viewModel.setAuthPortal(AuthPortal.OIC) },
+                    onSelectOfficer = { viewModel.setAuthPortal(AuthPortal.OFFICER) }
                 )
-                val subordinates by viewModel.subordinates.collectAsStateWithLifecycle()
-                var isDetailDialogOpen by remember { mutableStateOf(false) }
-                
-                // Real-time notification for OIC
-                val pendingSubordinates = remember(subordinates) { subordinates.filter { it.status == "PENDING" } }
-                var lastPendingCount by remember { mutableStateOf(pendingSubordinates.size) }
+            }
+            AuthPortal.OIC -> {
+                BackHandler { viewModel.setAuthPortal(AuthPortal.CHOOSER) }
+                OICLoginScreen(
+                    onBack = { viewModel.setAuthPortal(AuthPortal.CHOOSER) },
+                    onLoginSuccess = { /* Handled by AuthStateListener in VM */ }
+                )
+            }
+            AuthPortal.OFFICER -> {
+                BackHandler { viewModel.setAuthPortal(AuthPortal.CHOOSER) }
+                OfficerLoginScreen(
+                    onBack = { viewModel.setAuthPortal(AuthPortal.CHOOSER) },
+                    onLoginSuccess = { /* Handled by AuthStateListener in VM */ }
+                )
+            }
+        }
+        return
+    }
 
-                LaunchedEffect(pendingSubordinates.size) {
-                    if (pendingSubordinates.size > lastPendingCount) {
-                        snackbarHostState.showSnackbar("නව ලියාපදිංචි ඉල්ලීමක් ලැබුණි!")
-                    }
-                    lastPendingCount = pendingSubordinates.size
-                }
+    // 2. Signed in with Google, but profile not in Firestore yet
+    if (appUser == null) {
+        if (authPortal == AuthPortal.OIC) {
+            BackHandler { viewModel.logout() }
+            OICRegistrationScreen(viewModel = viewModel)
+        } else {
+            BackHandler { viewModel.logout() }
+            OfficerRegistrationScreen(viewModel = viewModel)
+        }
+        return
+    }
 
-                if (subordinates.isEmpty()) {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text("සම්බන්ධ වූ නිලධාරීන් නොමැත.")
-                    }
-                } else {
-                    androidx.compose.foundation.lazy.LazyColumn(modifier = Modifier.fillMaxSize()) {
-                        items(subordinates.size) { index ->
-                            val officer = subordinates[index]
-                            androidx.compose.material3.ListItem(
-                                modifier = Modifier.clickable {
-                                    viewModel.selectOfficer(officer)
-                                    isDetailDialogOpen = true
-                                },
-                                headlineContent = { Text(officer.displayName) },
-                                supportingContent = { 
-                                    Column {
-                                        Text("තත්ත්වය: ${officer.status} | Duty: ${if (officer.isOnDuty) "ON" else "OFF"}") 
-                                        officer.lastLocation?.let { loc ->
-                                            val lat = loc["lat"] as? Double ?: 0.0
-                                            val lng = loc["lng"] as? Double ?: 0.0
-                                            val ts = loc["timestamp"] as? Long ?: 0L
-                                            if (lat != 0.0) {
-                                                Text("ස්ථානය: $lat, $lng", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
-                                                Text("යාවත්කාලීන විය: ${com.example.util.DateTimeUtils.formatTime(ts)}", fontSize = 10.sp)
-                                            }
-                                        }
-                                    }
-                                },
-                                trailingContent = {
-                                    if (officer.status == "PENDING") {
-                                        Row {
-                                            Button(onClick = { viewModel.approveOfficer(officer.uid) }) { Text("අනුමත කරන්න") }
-                                            Spacer(modifier = Modifier.width(4.dp))
-                                            Button(onClick = { viewModel.rejectOfficer(officer.uid) }) { Text("ප්‍රතික්ෂේප කරන්න") }
-                                        }
-                                    }
-                                }
-                            )
-                        }
-                    }
-                }
-                
-                if (isDetailDialogOpen) {
-                    com.example.ui.OfficerDetailDialog(
-                        viewModel = viewModel,
-                        onDismiss = { isDetailDialogOpen = false }
+    // 3. User is an OIC -> Dedicated OIC Dashboard Screen
+    if (appUser?.role == "OIC" || isOICLoggedIn) {
+        OICDashboardScreen(viewModel = viewModel)
+        return
+    }
+
+    // 4. User is an Officer awaiting OIC approval
+    if (appUser?.role == "OFFICER" && appUser?.status == "PENDING") {
+        PendingApprovalScreen(viewModel = viewModel)
+        return
+    }
+
+    // 5. User is an Officer but rejected
+    if (appUser?.role == "OFFICER" && appUser?.status == "REJECTED") {
+        Scaffold { padding ->
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.padding(24.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(64.dp)
                     )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "ලියාපදිංචිය ප්‍රතික්ෂේප විය",
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "ඔබ ඇතුළත් කළ OIC කේතය හෝ විස්තර ප්‍රතික්ෂේප වී ඇත. කරුණාකර නිවැරදි OIC කේතය සහිතව නැවත උත්සාහ කරන්න.",
+                        textAlign = TextAlign.Center,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(24.dp))
+                    Button(onClick = { viewModel.logout() }) {
+                        Text("නැවත උත්සාහ කරන්න (Re-try / Sign Out)")
+                    }
                 }
             }
         }
         return
     }
+
+    // 6. User is an Approved Police Officer: continues to regular officer interface below
 
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
@@ -276,6 +279,31 @@ fun MainPoliceApp(viewModel: PoliceViewModel, isDarkTheme: Boolean) {
     val latestDuty by viewModel.latestDutyRecord.collectAsStateWithLifecycle()
     val latestShift by viewModel.latestShiftRecord.collectAsStateWithLifecycle()
     val isOnDuty = latestShift?.type == "ON_DUTY"
+
+    val locationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        val granted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+                permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+        if (granted) {
+            viewModel.refreshCurrentLocation()
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        val hasFine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        val hasCoarse = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        if (!hasFine && !hasCoarse) {
+            locationPermissionLauncher.launch(
+                arrayOf(
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION
+                )
+            )
+        } else {
+            viewModel.refreshCurrentLocation()
+        }
+    }
 
     // Back handler: return to Dashboard if on another screen
     BackHandler(enabled = currentScreen != Screen.DASHBOARD) {
