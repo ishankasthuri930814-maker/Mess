@@ -16,35 +16,26 @@ jobs:
     - name: Set up JDK 17
       uses: actions/setup-java@v4
       with:
-        distribution: 'zulu'
+        distribution: 'temurin'
         java-version: '17'
 
-    - name: Setup Android SDK
-      uses: android-actions/setup-android@v3
-
-    - name: Make Gradle wrapper executable
+    - name: Build with Gradle
       run: |
+        export ANDROID_HOME=$HOME/android-sdk
         if [ -f "./gradlew" ]; then
           chmod +x gradlew
-        elif [ -f "./app/gradlew" ]; then
-          chmod +x app/gradlew
-        fi
-
-    - name: Build Debug APK with Gradle
-      run: |
-        if [ -f "./gradlew" ]; then
           ./gradlew assembleDebug --no-daemon
         elif [ -f "./app/gradlew" ]; then
           cd app
+          chmod +x gradlew
           ./gradlew assembleDebug --no-daemon
         else
           gradle wrapper
           ./gradlew assembleDebug --no-daemon
         fi
 
-    - name: Upload APK Artifact
+    - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
         name: app-debug
         path: '**/build/outputs/apk/debug/*.apk'
-        if-no-files-found: error
