@@ -19,14 +19,25 @@ jobs:
         distribution: 'temurin'
         java-version: '17'
 
-    - name: Grant execute permission for gradlew
-      run: chmod +x gradlew
-
-    - name: Build Debug APK
-      run: ./gradlew assembleDebug
+    - name: Find and Build with Gradle
+      run: |
+        # gradlew file එක තියෙන තැන සොයා Gradle build කිරීම
+        if [ -f "./gradlew" ]; then
+          chmod +x gradlew
+          ./gradlew assembleDebug
+        elif [ -f "./app/gradlew" ]; then
+          cd app
+          chmod +x gradlew
+          ./gradlew assembleDebug
+        else
+          # gradlew නැත්නම් gradle wrapper generate කර ගැනීමට
+          gradle wrapper
+          chmod +x gradlew
+          ./gradlew assembleDebug
+        fi
 
     - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
         name: app-debug
-        path: app/build/outputs/apk/debug/app-debug.apk
+        path: '**/build/outputs/apk/debug/app-debug.apk'
