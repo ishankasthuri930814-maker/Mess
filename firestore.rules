@@ -1,0 +1,120 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isOIC() {
+      return isSignedIn() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'OIC';
+    }
+
+    function isSubordinateOf(oicEmail) {
+      return isSignedIn() && request.auth.token.email == oicEmail;
+    }
+
+    function isValidUser(data) {
+      return data.uid is string &&
+             data.displayName is string &&
+             data.email is string &&
+             data.role in ['OFFICER', 'OIC'] &&
+             data.status in ['PENDING', 'APPROVED', 'REJECTED'] &&
+             (!('oicEmail' in data) || data.oicEmail is string) &&
+             (!('isOnDuty' in data) || data.isOnDuty is bool) &&
+             (!('lastLocation' in data) || data.lastLocation is map) &&
+             (!('updatedAt' in data) || data.updatedAt is timestamp);
+    }
+
+    match /users/{userId} {
+      allow get: if isOwner(userId) || (isSignedIn() && existing().oicEmail == request.auth.token.email);
+      allow list: if isSignedIn() && (request.auth.uid == userId || resource.data.oicEmail == request.auth.token.email);
+      
+      allow create: if isOwner(userId) && 
+                       incoming().uid == userId &&
+                       incoming().role in ['OFFICER', 'OIC'] &&
+                       incoming().status == 'PENDING' &&
+                       isValidUser(incoming());
+      
+      allow update: if (isOwner(userId) && 
+                        incoming().uid == existing().uid &&
+                        incoming().role == existing().role &&
+                        incoming().email == existing().email &&
+                        (incoming().status == existing().status || existing().status == 'REJECTED') &&
+                        isValidUser(incoming())) ||
+                       (isOIC() && 
+                        existing().oicEmail == request.auth.token.email &&
+                        incoming().diff(existing()).affectedKeys().hasOnly(['status']) &&
+                        incoming().status in ['APPROVED', 'REJECTED']);
+    }
+
+    function isValidDutyRecord(data) {
+      return data.officerId is string &&
+             data.oicEmail is string &&
+             data.type in ['ON_DUTY', 'OFF_DUTY', 'EXTRA_DUTY'] &&
+             data.timestamp is number &&
+             (!('ibPage' in data) || data.ibPage is string) &&
+             (!('ibParagraph' in data) || data.ibParagraph is string) &&
+             (!('dutyNature' in data) || data.dutyNature is string) &&
+             (!('remarks' in data) || data.remarks is string) &&
+             (!('photoPath' in data) || data.photoPath is string) &&
+             (!('scenePhotoPath' in data) || data.scenePhotoPath is string) &&
+             (!('dutyDurationMinutes' in data) || data.dutyDurationMinutes is number) &&
+             data.createdAt is timestamp;
+    }
+
+    match /duty_records/{recordId} {
+      allow read: if isSignedIn() && (resource.data.officerId == request.auth.uid || resource.data.oicEmail == request.auth.token.email);
+      allow create: if isSignedIn() && 
+                       incoming().officerId == request.auth.uid &&
+                       isValidDutyRecord(incoming());
+      allow update: if isSignedIn() && 
+                       existing().officerId == request.auth.uid &&
+                       incoming().officerId == existing().officerId &&
+                       isValidDutyRecord(incoming());
+      allow delete: if isSignedIn() && existing().officerId == request.auth.uid;
+    }
+
+    function isValidMessRecord(data) {
+      return data.officerId is string &&
+             data.oicEmail is string &&
+             data.date is string &&
+             data.mealType in ['BREAKFAST', 'LUNCH', 'DINNER'] &&
+             data.isTaken is bool &&
+             data.price is number &&
+             (!('mealNotes' in data) || data.mealNotes is string) &&
+             (!('photoPath' in data) || data.photoPath is string) &&
+             data.timestamp is number &&
+             data.createdAt is timestamp;
+    }
+
+    match /mess_records/{recordId} {
+      allow read: if isSignedIn() && (resource.data.officerId == request.auth.uid || resource.data.oicEmail == request.auth.token.email);
+      allow create: if isSignedIn() && 
+                       incoming().officerId == request.auth.uid &&
+                       isValidMessRecord(incoming());
+      allow update: if isSignedIn() && 
+                       existing().officerId == request.auth.uid &&
+                       incoming().officerId == existing().officerId &&
+                       isValidMessRecord(incoming());
+      allow delete: if isSignedIn() && existing().officerId == request.auth.uid;
+    }
+  }
+}

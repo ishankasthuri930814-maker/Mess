@@ -27,9 +27,22 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.tasks.await
+import android.location.Location
+import com.google.firebase.Firebase
+import com.google.firebase.auth.auth
+import com.example.data.AppUser
+import com.google.firebase.auth.FirebaseUser
+import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.Priority
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlin.math.max
 
 enum class DutyFilter {
@@ -104,6 +117,154 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
         if (prefs.contains("is_dark_mode")) prefs.getBoolean("is_dark_mode", false) else null
     )
     val isDarkMode: StateFlow<Boolean?> = _isDarkMode.asStateFlow()
+
+    // --- User Registration State ---
+    private val _isRegistered = MutableStateFlow(prefs.getBoolean("is_registered", false))
+    val isRegistered: StateFlow<Boolean> = _isRegistered.asStateFlow()
+
+    private val _isOICLoggedIn = MutableStateFlow(prefs.getBoolean("is_oic_logged_in", false))
+    val isOICLoggedIn: StateFlow<Boolean> = _isOICLoggedIn.asStateFlow()
+
+    private val auth = Firebase.auth
+    private val STOP_TIMEOUT_MILLIS = 5000L
+
+    private val _currentUser = MutableStateFlow(auth.currentUser)
+    val currentUser: StateFlow<FirebaseUser?> = _currentUser.asStateFlow()
+
+    private val _appUser = MutableStateFlow<AppUser?>(null)
+    val appUser: StateFlow<AppUser?> = _appUser.asStateFlow()
+
+    private var locationJob: Job? = null
+    private val fusedLocationClient = LocationServices.getFusedLocationProviderClient(application)
+
+    // --- Subordinates (for OIC) ---
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val subordinates: StateFlow<List<AppUser>> = _appUser.flatMapLatest { user ->
+        if (user?.role == "OIC") {
+            repository.observeSubordinates(user.email)
+        } else {
+            flow { emit(emptyList<AppUser>()) }
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), emptyList())
+
+    private val _selectedOfficer = MutableStateFlow<AppUser?>(null)
+    val selectedOfficer: StateFlow<AppUser?> = _selectedOfficer.asStateFlow()
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val selectedOfficerActivity = _selectedOfficer.flatMapLatest { officer ->
+        if (officer != null) {
+            repository.observeDutyRecordsForOfficer(officer.uid)
+        } else {
+            flow { emit(emptyList<DutyRecord>()) }
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), emptyList())
+
+    fun selectOfficer(officer: AppUser?) {
+        _selectedOfficer.value = officer
+    }
+
+    init {
+        auth.addAuthStateListener { firebaseAuth ->
+            _currentUser.value = firebaseAuth.currentUser
+            if (firebaseAuth.currentUser != null) {
+                fetchAppUser(firebaseAuth.currentUser!!.uid)
+            } else {
+                _appUser.value = null
+                _isRegistered.value = false
+                _isOICLoggedIn.value = false
+            }
+        }
+    }
+
+    private fun fetchAppUser(uid: String) {
+        viewModelScope.launch {
+            repository.observeUser(uid).collect { user ->
+                _appUser.value = user
+                if (user != null) {
+                    _isRegistered.value = user.status == "APPROVED" || user.status == "PENDING"
+                    _isOICLoggedIn.value = user.role == "OIC"
+                    prefs.edit().putBoolean("is_registered", _isRegistered.value).commit()
+                    prefs.edit().putBoolean("is_oic_logged_in", _isOICLoggedIn.value).commit()
+                    updateLocationTracking(user)
+                }
+            }
+        }
+    }
+
+    private fun updateLocationTracking(user: AppUser) {
+        locationJob?.cancel()
+        if (user.role == "OFFICER" && user.status == "APPROVED" && user.isOnDuty) {
+            locationJob = viewModelScope.launch(Dispatchers.IO) {
+                while (true) {
+                    try {
+                        val locationResult = fusedLocationClient.getCurrentLocation(Priority.PRIORITY_BALANCED_POWER_ACCURACY, null).await()
+                        if (locationResult != null) {
+                            repository.updateLastLocation(user.uid, locationResult.latitude, locationResult.longitude, user.isOnDuty)
+                        }
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
+                    delay(60000) // Update every minute
+                }
+            }
+        }
+    }
+
+    fun registerOfficer(officerName: String, oicEmail: String) {
+        val user = auth.currentUser ?: return
+        viewModelScope.launch {
+            val appUser = AppUser(
+                uid = user.uid,
+                displayName = officerName,
+                email = user.email ?: "",
+                role = "OFFICER",
+                status = "PENDING",
+                oicEmail = oicEmail.trim().lowercase()
+            )
+            repository.saveUser(appUser)
+            _isRegistered.value = true
+            prefs.edit().putBoolean("is_registered", true).commit()
+            _userMessage.emit("ලියාපදිංචි වීමේ ඉල්ලීම OIC වෙත යොමු කරන ලදී.")
+        }
+    }
+
+    fun registerOIC(oicName: String) {
+        val user = auth.currentUser ?: return
+        viewModelScope.launch {
+            val appUser = AppUser(
+                uid = user.uid,
+                displayName = oicName,
+                email = user.email ?: "",
+                role = "OIC",
+                status = "APPROVED" 
+            )
+            repository.saveUser(appUser)
+            _isOICLoggedIn.value = true
+            prefs.edit().putBoolean("is_oic_logged_in", true).commit()
+            _userMessage.emit("OIC ලෙස සාර්ථකව ලියාපදිංචි විය.")
+        }
+    }
+
+    fun approveOfficer(officerUid: String) {
+        viewModelScope.launch {
+            repository.updateOfficerStatus(officerUid, "APPROVED")
+            _userMessage.emit("නිලධාරියා අනුමත කරන ලදී.")
+        }
+    }
+
+    fun rejectOfficer(officerUid: String) {
+        viewModelScope.launch {
+            repository.updateOfficerStatus(officerUid, "REJECTED")
+            _userMessage.emit("නිලධාරියා ප්‍රතික්ෂේප කරන ලදී.")
+        }
+    }
+
+    fun logout() {
+        auth.signOut()
+        _isRegistered.value = false
+        _isOICLoggedIn.value = false
+        prefs.edit().clear().commit()
+    }
 
     fun toggleDarkMode() {
         val next = when (_isDarkMode.value) {
@@ -496,6 +657,8 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
             val record = DutyRecord(
                 type = type,
                 timestamp = timestamp,
+                officerId = auth.currentUser?.uid ?: "",
+                oicEmail = appUser.value?.oicEmail ?: "",
                 ibPage = ibPage.trim(),
                 ibParagraph = ibParagraph.trim(),
                 dutyNature = dutyNature.trim(),
@@ -507,6 +670,14 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
                 compressedSizeKb = compKb
             )
             repository.insertDutyRecord(record)
+            repository.syncDutyRecordToFirestore(record)
+
+            if (type == "ON_DUTY" || type == "OFF_DUTY") {
+                val isOnDuty = type == "ON_DUTY"
+                auth.currentUser?.let { user ->
+                    repository.updateLastLocation(user.uid, 0.0, 0.0, isOnDuty) // Trigger sync for duty status
+                }
+            }
 
             val photoCount = (if (photoPath != null) 1 else 0) + (if (scenePhotoPath != null) 1 else 0)
             val msg = when (type) {
@@ -671,6 +842,19 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
                 photoPath = photoPath,
                 compressedSizeKb = compKb
             )
+            
+            val messRecord = MessRecord(
+                officerId = auth.currentUser?.uid ?: "",
+                oicEmail = appUser.value?.oicEmail ?: "",
+                date = date,
+                mealType = mealType,
+                isTaken = isTaken,
+                mealNotes = notes.trim(),
+                price = finalPrice,
+                photoPath = photoPath,
+                compressedSizeKb = compKb
+            )
+            repository.syncMessRecordToFirestore(messRecord)
 
             val priceFormatted = "රු. %.2f".format(finalPrice)
             val msg = if (compKb > 0) "ආහාර සටහන ($priceFormatted) සුරැකිණි! Photo compress විය."

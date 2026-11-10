@@ -1,0 +1,19 @@
+{
+  "firestore": [
+    {
+      "database": "ai-studio-android-policedu-d11e543c-dd7c-4ec6-9686-cb3346787965",
+      "rules": "firestore.rules"
+    }
+  ],
+  "emulators": {
+    "auth": {
+      "port": 9099
+    },
+    "firestore": {
+      "port": 8085
+    },
+    "ui": {
+      "enabled": false
+    }
+  }
+}

@@ -37,6 +37,7 @@ import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Shield
 import com.example.ui.ExportReportDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -57,6 +58,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -79,10 +81,12 @@ import com.example.ui.DutyEntryDialog
 import com.example.ui.DutyScreen
 import com.example.ui.MealEntryDialog
 import com.example.ui.MessScreen
+import com.example.ui.OICLoginScreen
 import com.example.ui.PhotoViewerDialog
 import com.example.ui.PoliceViewModel
 import com.example.ui.PoliceViewModelFactory
 import com.example.ui.ProfileScreen
+import com.example.ui.RegistrationScreen
 import com.example.ui.RunningChartScreen
 import com.example.ui.theme.BadgeGold
 import com.example.ui.theme.DutyActiveGreen
@@ -113,7 +117,9 @@ class MainActivity : ComponentActivity() {
 
     private val viewModel: PoliceViewModel by viewModels {
         val database = AppDatabase.getInstance(applicationContext)
-        val repository = PoliceRepository(database.policeDao())
+        val firestoreId = getString(R.string.firestore_database_id)
+        val firestore = com.google.firebase.firestore.FirebaseFirestore.getInstance(firestoreId)
+        val repository = PoliceRepository(database.policeDao(), firestore)
         PoliceViewModelFactory(repository, application)
     }
 
@@ -135,6 +141,118 @@ class MainActivity : ComponentActivity() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainPoliceApp(viewModel: PoliceViewModel, isDarkTheme: Boolean) {
+    val currentUser by viewModel.currentUser.collectAsStateWithLifecycle()
+    val appUser by viewModel.appUser.collectAsStateWithLifecycle()
+    val isRegistered by viewModel.isRegistered.collectAsStateWithLifecycle()
+    val isOICLoggedIn by viewModel.isOICLoggedIn.collectAsStateWithLifecycle()
+
+    if (currentUser == null) {
+        OICLoginScreen(onLoginSuccess = { /* Handled by AuthStateListener in VM */ })
+        return
+    }
+
+    if (!isRegistered && appUser?.role != "OIC") {
+        RegistrationScreen(viewModel = viewModel)
+        return
+    }
+
+    if (appUser?.role == "OFFICER" && appUser?.status == "PENDING") {
+        Scaffold { padding ->
+            Box(modifier = Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(24.dp)) {
+                    Icon(Icons.Default.Security, contentDescription = null, tint = BadgeGold, modifier = Modifier.size(64.dp))
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text("ලියාපදිංචිය තහවුරු වෙමින් පවතී...", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("ඔබගේ OIC (${appUser?.oicEmail}) විසින් මෙය තහවුරු කළ පසු ඔබට ඇප් එක භාවිතා කළ හැක.", textAlign = TextAlign.Center)
+                    Spacer(modifier = Modifier.height(32.dp))
+                    Button(onClick = { viewModel.logout() }) { Text("ලොග් අවුට් වන්න") }
+                }
+            }
+        }
+        return
+    }
+
+    if (isOICLoggedIn) {
+        val snackbarHostState = remember { SnackbarHostState() }
+        // Simple OIC Dashboard
+        Scaffold(snackbarHost = { SnackbarHost(snackbarHostState) }) { padding ->
+            Column(modifier = Modifier.fillMaxSize().padding(padding)) {
+                TopAppBar(
+                    title = { Text("OIC Dashboard") },
+                    actions = {
+                        IconButton(onClick = { viewModel.logout() }) {
+                            Icon(Icons.Default.Person, contentDescription = "Logout")
+                        }
+                    }
+                )
+                val subordinates by viewModel.subordinates.collectAsStateWithLifecycle()
+                var isDetailDialogOpen by remember { mutableStateOf(false) }
+                
+                // Real-time notification for OIC
+                val pendingSubordinates = remember(subordinates) { subordinates.filter { it.status == "PENDING" } }
+                var lastPendingCount by remember { mutableStateOf(pendingSubordinates.size) }
+
+                LaunchedEffect(pendingSubordinates.size) {
+                    if (pendingSubordinates.size > lastPendingCount) {
+                        snackbarHostState.showSnackbar("නව ලියාපදිංචි ඉල්ලීමක් ලැබුණි!")
+                    }
+                    lastPendingCount = pendingSubordinates.size
+                }
+
+                if (subordinates.isEmpty()) {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text("සම්බන්ධ වූ නිලධාරීන් නොමැත.")
+                    }
+                } else {
+                    androidx.compose.foundation.lazy.LazyColumn(modifier = Modifier.fillMaxSize()) {
+                        items(subordinates.size) { index ->
+                            val officer = subordinates[index]
+                            androidx.compose.material3.ListItem(
+                                modifier = Modifier.clickable {
+                                    viewModel.selectOfficer(officer)
+                                    isDetailDialogOpen = true
+                                },
+                                headlineContent = { Text(officer.displayName) },
+                                supportingContent = { 
+                                    Column {
+                                        Text("තත්ත්වය: ${officer.status} | Duty: ${if (officer.isOnDuty) "ON" else "OFF"}") 
+                                        officer.lastLocation?.let { loc ->
+                                            val lat = loc["lat"] as? Double ?: 0.0
+                                            val lng = loc["lng"] as? Double ?: 0.0
+                                            val ts = loc["timestamp"] as? Long ?: 0L
+                                            if (lat != 0.0) {
+                                                Text("ස්ථානය: $lat, $lng", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
+                                                Text("යාවත්කාලීන විය: ${com.example.util.DateTimeUtils.formatTime(ts)}", fontSize = 10.sp)
+                                            }
+                                        }
+                                    }
+                                },
+                                trailingContent = {
+                                    if (officer.status == "PENDING") {
+                                        Row {
+                                            Button(onClick = { viewModel.approveOfficer(officer.uid) }) { Text("අනුමත කරන්න") }
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Button(onClick = { viewModel.rejectOfficer(officer.uid) }) { Text("ප්‍රතික්ෂේප කරන්න") }
+                                        }
+                                    }
+                                }
+                            )
+                        }
+                    }
+                }
+                
+                if (isDetailDialogOpen) {
+                    com.example.ui.OfficerDetailDialog(
+                        viewModel = viewModel,
+                        onDismiss = { isDetailDialogOpen = false }
+                    )
+                }
+            }
+        }
+        return
+    }
+
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -172,11 +290,10 @@ fun MainPoliceApp(viewModel: PoliceViewModel, isDarkTheme: Boolean) {
             }
         }
     }
-
-    Scaffold(
-        modifier = Modifier.fillMaxSize(),
-        snackbarHost = { SnackbarHost(snackbarHostState) },
-        topBar = {
+        Scaffold(
+            modifier = Modifier.fillMaxSize(),
+            snackbarHost = { SnackbarHost(snackbarHostState) },
+            topBar = {
             TopAppBar(
                 title = {
                     Row(

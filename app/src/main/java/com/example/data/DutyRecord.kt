@@ -1,20 +1,30 @@
 package com.example.data
 
 import androidx.room.Entity
+import androidx.room.Ignore
 import androidx.room.PrimaryKey
+import com.google.firebase.Timestamp
+import com.google.firebase.firestore.DocumentId
+import com.google.firebase.firestore.IgnoreExtraProperties
+import com.google.firebase.firestore.ServerTimestamp
 
+@IgnoreExtraProperties
 @Entity(tableName = "duty_records")
 data class DutyRecord(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
-    val type: String, // "ON_DUTY" or "OFF_DUTY"
+    val officerId: String = "",
+    val oicEmail: String = "",
+    val type: String = "", // "ON_DUTY", "OFF_DUTY", "EXTRA_DUTY"
     val timestamp: Long = System.currentTimeMillis(),
-    val ibPage: String, // Information book page
-    val ibParagraph: String, // Paragraph
-    val dutyNature: String, // Nature of duty
+    val ibPage: String = "",
+    val ibParagraph: String = "",
+    val dutyNature: String = "",
     val remarks: String = "",
-    val photoPath: String? = null, // Information book page photo
-    val scenePhotoPath: String? = null, // Incident / Scene photo (සිද්ධියේ හෝ ස්ථානයේ ඡායාරූපය)
-    val dutyDurationMinutes: Long = 0L, // Shift duration in minutes
+    val photoPath: String? = null,
+    val scenePhotoPath: String? = null,
+    val dutyDurationMinutes: Long = 0L,
     val originalSizeKb: Int = 0,
     val compressedSizeKb: Int = 0
-)
+) {
+    @ServerTimestamp @Ignore var createdAt: Timestamp? = null
+}

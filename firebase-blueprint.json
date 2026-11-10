@@ -1,0 +1,59 @@
+{
+  "collections": {
+    "users": {
+      "documents": {
+        "{userId}": {
+          "fields": {
+            "uid": "string",
+            "displayName": "string",
+            "email": "string",
+            "role": "string",
+            "status": "string",
+            "oicEmail": "string",
+            "isOnDuty": "boolean",
+            "lastLocation": "map",
+            "updatedAt": "timestamp"
+          }
+        }
+      }
+    },
+    "duty_records": {
+      "documents": {
+        "{recordId}": {
+          "fields": {
+            "officerId": "string",
+            "oicEmail": "string",
+            "type": "string",
+            "timestamp": "number",
+            "ibPage": "string",
+            "ibParagraph": "string",
+            "dutyNature": "string",
+            "remarks": "string",
+            "photoPath": "string",
+            "scenePhotoPath": "string",
+            "dutyDurationMinutes": "number",
+            "createdAt": "timestamp"
+          }
+        }
+      }
+    },
+    "mess_records": {
+      "documents": {
+        "{recordId}": {
+          "fields": {
+            "officerId": "string",
+            "oicEmail": "string",
+            "date": "string",
+            "mealType": "string",
+            "isTaken": "boolean",
+            "price": "number",
+            "mealNotes": "string",
+            "photoPath": "string",
+            "timestamp": "number",
+            "createdAt": "timestamp"
+          }
+        }
+      }
+    }
+  }
+}

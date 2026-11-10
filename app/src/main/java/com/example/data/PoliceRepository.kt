@@ -10,13 +10,77 @@ import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 
-class PoliceRepository(private val dao: PoliceDao) {
+import com.google.firebase.Firebase
+import com.google.firebase.auth.auth
+import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.snapshots
+import com.google.firebase.firestore.toObject
+import com.google.firebase.firestore.toObjects
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.tasks.await
+
+class PoliceRepository(
+    private val dao: PoliceDao,
+    private val db: FirebaseFirestore
+) {
 
     // --- Officer Profile ---
     val officerProfile: Flow<OfficerProfile?> = dao.getProfile()
     val allDutyRecords: Flow<List<DutyRecord>> = dao.getAllDutyRecords()
     val latestDutyRecord: Flow<DutyRecord?> = dao.getLatestDutyRecord()
     val allMessRecords: Flow<List<MessRecord>> = dao.getAllMessRecords()
+
+    private val auth = Firebase.auth
+    private fun requireUserId(): String = auth.currentUser?.uid ?: ""
+
+    fun observeUser(uid: String): Flow<AppUser?> = db.collection("users").document(uid)
+        .snapshots()
+        .map { it.toObject(AppUser::class.java) }
+
+    suspend fun saveUser(user: AppUser) {
+        db.collection("users").document(user.uid).set(user).await()
+    }
+
+    fun observeSubordinates(oicEmail: String): Flow<List<AppUser>> = db.collection("users")
+        .whereEqualTo("oicEmail", oicEmail)
+        .snapshots()
+        .map { it.toObjects(AppUser::class.java) }
+
+    suspend fun updateOfficerStatus(officerUid: String, status: String) {
+        db.collection("users").document(officerUid).update("status", status).await()
+    }
+
+    fun observeDutyRecordsForOfficer(officerId: String): Flow<List<DutyRecord>> = db.collection("duty_records")
+        .whereEqualTo("officerId", officerId)
+        .snapshots()
+        .map { it.toObjects(DutyRecord::class.java) }
+
+    fun observeMessRecordsForOfficer(officerId: String): Flow<List<MessRecord>> = db.collection("mess_records")
+        .whereEqualTo("officerId", officerId)
+        .snapshots()
+        .map { it.toObjects(MessRecord::class.java) }
+
+    suspend fun syncDutyRecordToFirestore(record: DutyRecord) {
+        db.collection("duty_records").document().set(record).await()
+    }
+
+    suspend fun syncMessRecordToFirestore(record: MessRecord) {
+        db.collection("mess_records").document().set(record).await()
+    }
+
+    suspend fun updateLastLocation(uid: String, lat: Double, lng: Double, isOnDuty: Boolean) {
+        val location = mapOf(
+            "lat" to lat,
+            "lng" to lng,
+            "timestamp" to System.currentTimeMillis()
+        )
+        db.collection("users").document(uid).update(
+            "lastLocation", location,
+            "isOnDuty", isOnDuty
+        ).await()
+    }
 
     fun searchDutyRecords(query: String): Flow<List<DutyRecord>> {
         return if (query.isBlank()) {
