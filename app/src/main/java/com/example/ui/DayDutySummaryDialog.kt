@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.AccessTime
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material.icons.filled.Security
@@ -63,6 +64,7 @@ import java.io.File
 fun DayDutySummaryDialog(
     summary: DailyDutySummary,
     onDismiss: () -> Unit,
+    onEditRecord: ((DutyRecord) -> Unit)? = null,
     onViewPhoto: (path: String, title: String, compKb: Int, origKb: Int) -> Unit
 ) {
     Dialog(
@@ -202,6 +204,7 @@ fun DayDutySummaryDialog(
                         SingleDutyDetailCard(
                             record = summary.onDutyRecord,
                             badgeColor = DutyActiveGreen,
+                            onEditRecord = onEditRecord,
                             onViewPhoto = onViewPhoto
                         )
                     } else {
@@ -214,6 +217,7 @@ fun DayDutySummaryDialog(
                         SingleDutyDetailCard(
                             record = summary.offDutyRecord,
                             badgeColor = DutyOffOrange,
+                            onEditRecord = onEditRecord,
                             onViewPhoto = onViewPhoto
                         )
                     } else {
@@ -232,6 +236,7 @@ fun DayDutySummaryDialog(
                                 record = extraRec,
                                 badgeColor = Color(0xFF2563EB),
                                 labelPrefix = "අමතර රාජකාරිය #${index + 1}: ",
+                                onEditRecord = onEditRecord,
                                 onViewPhoto = onViewPhoto
                             )
                         }
@@ -300,6 +305,7 @@ fun SingleDutyDetailCard(
     record: DutyRecord,
     badgeColor: Color,
     labelPrefix: String = "",
+    onEditRecord: ((DutyRecord) -> Unit)? = null,
     onViewPhoto: (path: String, title: String, compKb: Int, origKb: Int) -> Unit
 ) {
     Card(
@@ -313,7 +319,7 @@ fun SingleDutyDetailCard(
                 .padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            // Header Row: Nature & Time
+            // Header Row: Nature & Time & Edit Button
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -323,14 +329,30 @@ fun SingleDutyDetailCard(
                     text = "$labelPrefix${record.dutyNature.ifBlank { "රාජකාරි සටහන" }}",
                     fontWeight = FontWeight.Bold,
                     fontSize = 13.sp,
-                    color = badgeColor
+                    color = badgeColor,
+                    modifier = Modifier.weight(1f)
                 )
-                Text(
-                    text = DateTimeUtils.formatTime(record.timestamp),
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = DateTimeUtils.formatTime(record.timestamp),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (onEditRecord != null) {
+                        IconButton(
+                            onClick = { onEditRecord(record) },
+                            modifier = Modifier.size(28.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Edit,
+                                contentDescription = "Edit record",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                }
             }
 
             // IB Page & Para

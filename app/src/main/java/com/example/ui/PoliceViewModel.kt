@@ -1,7 +1,9 @@
 package com.example.ui
 
+import android.app.Application
 import android.content.Context
 import android.net.Uri
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -93,22 +95,33 @@ data class DailyMessSummary(
     val isCurrentDay: Boolean
 )
 
-class PoliceViewModel(private val repository: PoliceRepository) : ViewModel() {
+class PoliceViewModel(private val repository: PoliceRepository, application: Application) : AndroidViewModel(application) {
+
+    private val prefs = application.getSharedPreferences("police_prefs", Context.MODE_PRIVATE)
 
     // --- Dark Mode State ---
-    private val _isDarkMode = MutableStateFlow<Boolean?>(null)
+    private val _isDarkMode = MutableStateFlow<Boolean?>(
+        if (prefs.contains("is_dark_mode")) prefs.getBoolean("is_dark_mode", false) else null
+    )
     val isDarkMode: StateFlow<Boolean?> = _isDarkMode.asStateFlow()
 
     fun toggleDarkMode() {
-        _isDarkMode.value = when (_isDarkMode.value) {
+        val next = when (_isDarkMode.value) {
             true -> false
             false -> true
             else -> true
         }
+        _isDarkMode.value = next
+        prefs.edit().putBoolean("is_dark_mode", next).commit()
     }
 
     fun setDarkMode(dark: Boolean?) {
         _isDarkMode.value = dark
+        if (dark != null) {
+            prefs.edit().putBoolean("is_dark_mode", dark).commit()
+        } else {
+            prefs.edit().remove("is_dark_mode").commit()
+        }
     }
 
     // --- Officer Profile ---
@@ -506,6 +519,71 @@ class PoliceViewModel(private val repository: PoliceRepository) : ViewModel() {
         }
     }
 
+    fun updateDutyRecord(
+        context: Context,
+        recordId: Long,
+        type: String,
+        timestamp: Long,
+        ibPage: String,
+        ibParagraph: String,
+        dutyNature: String,
+        remarks: String,
+        photoUri: Uri?,
+        scenePhotoUri: Uri?,
+        dutyDurationMinutes: Long,
+        onSuccess: () -> Unit
+    ) {
+        viewModelScope.launch {
+            var photoPath: String? = null
+            var scenePhotoPath: String? = null
+            var origKb = 0
+            var compKb = 0
+
+            if (photoUri != null) {
+                val compression = ImageCompressor.compressAndSave(context, photoUri, prefix = "duty")
+                if (compression != null) {
+                    photoPath = compression.filePath
+                    origKb = compression.originalSizeKb
+                    compKb = compression.compressedSizeKb
+                }
+            }
+
+            if (scenePhotoUri != null) {
+                val sceneCompression = ImageCompressor.compressAndSave(context, scenePhotoUri, prefix = "duty_scene")
+                if (sceneCompression != null) {
+                    scenePhotoPath = sceneCompression.filePath
+                    origKb += sceneCompression.originalSizeKb
+                    compKb += sceneCompression.compressedSizeKb
+                }
+            }
+
+            val record = DutyRecord(
+                id = recordId,
+                type = type,
+                timestamp = timestamp,
+                ibPage = ibPage.trim(),
+                ibParagraph = ibParagraph.trim(),
+                dutyNature = dutyNature.trim(),
+                remarks = remarks.trim(),
+                photoPath = photoPath,
+                scenePhotoPath = scenePhotoPath,
+                dutyDurationMinutes = dutyDurationMinutes,
+                originalSizeKb = origKb,
+                compressedSizeKb = compKb
+            )
+            repository.updateDutyRecord(record)
+            _userMessage.emit("රාජකාරි සටහන යාවත්කාලීන විය!")
+            onSuccess()
+        }
+    }
+
+    fun updateDutyRecord(record: DutyRecord) {
+        viewModelScope.launch {
+            repository.updateDutyRecord(record)
+            _userMessage.emit("රාජකාරි සටහන යාවත්කාලීන විය!")
+        }
+    }
+
     private fun calculateDutyMinutesForDate(dayRecords: List<DutyRecord>, targetDateKey: String): Long {
         if (dayRecords.isEmpty()) return 0L
         var explicitSum = 0L
@@ -620,6 +698,7 @@ class PoliceViewModel(private val repository: PoliceRepository) : ViewModel() {
         startFuel: Double,
         addedFuel: Double,
         notes: String,
+        customRemainingFuel: Double? = null,
         existingId: Long = 0,
         onSuccess: () -> Unit
     ) {
@@ -627,7 +706,7 @@ class PoliceViewModel(private val repository: PoliceRepository) : ViewModel() {
             val distanceKm = max(0.0, endMeter - startMeter)
             val effectiveKmpL = if (kmPerLiter > 0) kmPerLiter else 1.0
             val consumedFuel = distanceKm / effectiveKmpL
-            val remainingFuel = startFuel + addedFuel - consumedFuel
+            val remainingFuel = customRemainingFuel ?: (startFuel + addedFuel - consumedFuel)
 
             val record = RunningChartRecord(
                 id = existingId,
@@ -694,11 +773,14 @@ class PoliceViewModel(private val repository: PoliceRepository) : ViewModel() {
     }
 }
 
-class PoliceViewModelFactory(private val repository: PoliceRepository) : ViewModelProvider.Factory {
+class PoliceViewModelFactory(
+    private val repository: PoliceRepository,
+    private val application: Application
+) : ViewModelProvider.Factory {
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(PoliceViewModel::class.java)) {
             @Suppress("UNCHECKED_CAST")
-            return PoliceViewModel(repository) as T
+            return PoliceViewModel(repository, application) as T
         }
         throw IllegalArgumentException("Unknown ViewModel class")
     }

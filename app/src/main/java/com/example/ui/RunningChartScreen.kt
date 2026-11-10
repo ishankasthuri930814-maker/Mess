@@ -218,9 +218,10 @@ fun RunningChartCalculatorTab(
     var distanceDrivenStr by remember { mutableStateOf("") }
     var consumedFuelInputStr by remember { mutableStateOf("") }
 
-    var kmPerLiterStr by remember { mutableStateOf("7.0") }
-    var startFuelStr by remember { mutableStateOf("45.0") }
-    var addedFuelStr by remember { mutableStateOf("0.0") }
+    var kmPerLiterStr by remember { mutableStateOf("") }
+    var startFuelStr by remember { mutableStateOf("") }
+    var addedFuelStr by remember { mutableStateOf("") }
+    var customRemainingFuelStr by remember { mutableStateOf("") }
     var notes by remember { mutableStateOf("") }
 
     var isConfirmDialogOpen by remember { mutableStateOf(false) }
@@ -250,10 +251,10 @@ fun RunningChartCalculatorTab(
                 if (startMeterStr.isBlank()) {
                     startMeterStr = "%.1f".format(latest.endMeter)
                 }
-                if (startFuelStr == "45.0" || startFuelStr.isBlank()) {
+                if (startFuelStr.isBlank()) {
                     startFuelStr = "%.1f".format(latest.remainingFuel)
                 }
-                if (kmPerLiterStr == "7.0") {
+                if (kmPerLiterStr.isBlank()) {
                     kmPerLiterStr = "%.1f".format(latest.kmPerLiter)
                 }
             }
@@ -321,7 +322,22 @@ fun RunningChartCalculatorTab(
     
     val startFuel = startFuelStr.toDoubleOrNull() ?: 0.0
     val addedFuel = addedFuelStr.toDoubleOrNull() ?: 0.0
-    val remainingFuel = startFuel + addedFuel - consumedFuel
+    val autoRemainingFuel = max(0.0, startFuel + addedFuel - consumedFuel)
+    val customRemainingFuel = customRemainingFuelStr.toDoubleOrNull()
+    val remainingFuel = customRemainingFuel ?: autoRemainingFuel
+
+    fun resetCalculatorFields() {
+        vehicleNumber = ""
+        startMeterStr = ""
+        endMeterStr = ""
+        distanceDrivenStr = ""
+        consumedFuelInputStr = ""
+        kmPerLiterStr = ""
+        startFuelStr = ""
+        addedFuelStr = ""
+        customRemainingFuelStr = ""
+        notes = ""
+    }
 
     Column(
         modifier = Modifier
@@ -446,7 +462,7 @@ fun RunningChartCalculatorTab(
             )
         }
 
-        // Row 2: Ending Meter & Consumed Fuel (භාවිත කළ ඉන්ධන - L)
+        // Row 2: Ending Meter & Consumed Fuel
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -478,7 +494,39 @@ fun RunningChartCalculatorTab(
             )
         }
 
-        // Row 3: Km/L & Starting Fuel / Added Fuel
+        // Row 3: Starting Fuel & Added Fuel
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            OutlinedTextField(
+                value = startFuelStr,
+                onValueChange = { startFuelStr = it },
+                label = { Text("ආරම්භක ඉන්ධන (L)") },
+                placeholder = { Text("e.g. 45.0") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                singleLine = true,
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier
+                    .weight(1f)
+                    .testTag("start_fuel_input")
+            )
+
+            OutlinedTextField(
+                value = addedFuelStr,
+                onValueChange = { addedFuelStr = it },
+                label = { Text("ලබාගත් ඉන්ධන (L)") },
+                placeholder = { Text("e.g. 14.0") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                singleLine = true,
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier
+                    .weight(1f)
+                    .testTag("added_fuel_input")
+            )
+        }
+
+        // Row 4: Km/L & Custom Tank Remaining Fuel Override
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -497,16 +545,16 @@ fun RunningChartCalculatorTab(
             )
 
             OutlinedTextField(
-                value = addedFuelStr,
-                onValueChange = { addedFuelStr = it },
-                label = { Text("ලබාගත් ඉන්ධන (L)") },
-                placeholder = { Text("e.g. 14.0") },
+                value = customRemainingFuelStr,
+                onValueChange = { customRemainingFuelStr = it },
+                label = { Text("ඉතිරි ඉන්ධන වෙනස් කිරීමට (L)") },
+                placeholder = { Text("e.g. %.1f".format(autoRemainingFuel)) },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 singleLine = true,
                 shape = RoundedCornerShape(14.dp),
                 modifier = Modifier
-                    .weight(1f)
-                    .testTag("added_fuel_input")
+                    .weight(1.2f)
+                    .testTag("custom_remaining_fuel_input")
             )
         }
 
@@ -595,11 +643,20 @@ fun RunningChartCalculatorTab(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = "ටැංකියේ ඉතිරි ඉන්ධන ප්‍රමාණය:",
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold
-                )
+                Column {
+                    Text(
+                        text = "ටැංකියේ ඉතිරි ඉන්ධන ප්‍රමාණය:",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    if (customRemainingFuel != null) {
+                        Text(
+                            text = "(පරිශීලකයා විසින් වෙනස් කරන ලදී)",
+                            fontSize = 10.sp,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
                 Text(
                     text = "%.1f Liters".format(remainingFuel),
                     fontSize = 16.sp,
@@ -615,14 +672,7 @@ fun RunningChartCalculatorTab(
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             OutlinedButton(
-                onClick = {
-                    vehicleNumber = ""
-                    startMeterStr = ""
-                    endMeterStr = ""
-                    distanceDrivenStr = ""
-                    consumedFuelInputStr = ""
-                    notes = ""
-                },
+                onClick = { resetCalculatorFields() },
                 shape = RoundedCornerShape(12.dp),
                 modifier = Modifier.weight(1f)
             ) {
@@ -674,8 +724,10 @@ fun RunningChartCalculatorTab(
                     startFuel = startFuel,
                     addedFuel = addedFuel,
                     notes = notes,
+                    customRemainingFuel = customRemainingFuel,
                     onSuccess = {
                         isConfirmDialogOpen = false
+                        resetCalculatorFields()
                         onSaved()
                     }
                 )

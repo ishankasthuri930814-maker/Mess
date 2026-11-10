@@ -70,6 +70,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.AppDatabase
+import com.example.data.DutyRecord
 import com.example.data.MessRecord
 import com.example.data.PoliceRepository
 import com.example.ui.DashboardScreen
@@ -113,7 +114,7 @@ class MainActivity : ComponentActivity() {
     private val viewModel: PoliceViewModel by viewModels {
         val database = AppDatabase.getInstance(applicationContext)
         val repository = PoliceRepository(database.policeDao())
-        PoliceViewModelFactory(repository)
+        PoliceViewModelFactory(repository, application)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -143,6 +144,7 @@ fun MainPoliceApp(viewModel: PoliceViewModel, isDarkTheme: Boolean) {
     // Dialog states
     var isDutyDialogOpen by remember { mutableStateOf(false) }
     var dutyDialogInitialType by remember { mutableStateOf("ON_DUTY") }
+    var editingDutyRecord by remember { mutableStateOf<DutyRecord?>(null) }
 
     var isMealDialogOpen by remember { mutableStateOf(false) }
     var mealDialogType by remember { mutableStateOf("LUNCH") }
@@ -355,7 +357,13 @@ fun MainPoliceApp(viewModel: PoliceViewModel, isDarkTheme: Boolean) {
                 Screen.DUTY -> DutyScreen(
                     viewModel = viewModel,
                     onOpenDutyDialog = { type ->
+                        editingDutyRecord = null
                         dutyDialogInitialType = type
+                        isDutyDialogOpen = true
+                    },
+                    onEditDutyRecord = { record ->
+                        editingDutyRecord = record
+                        dutyDialogInitialType = record.type
                         isDutyDialogOpen = true
                     },
                     onViewPhoto = { path, title, compKb, origKb ->
@@ -395,23 +403,49 @@ fun MainPoliceApp(viewModel: PoliceViewModel, isDarkTheme: Boolean) {
     if (isDutyDialogOpen) {
         DutyEntryDialog(
             initialType = dutyDialogInitialType,
-            onDismiss = { isDutyDialogOpen = false },
+            editingRecord = editingDutyRecord,
+            onDismiss = {
+                isDutyDialogOpen = false
+                editingDutyRecord = null
+            },
             onSubmit = { type, timestamp, page, paragraph, nature, remarks, photoUri, scenePhotoUri, durationMinutes ->
-                viewModel.submitDutyReport(
-                    context = context,
-                    type = type,
-                    timestamp = timestamp,
-                    ibPage = page,
-                    ibParagraph = paragraph,
-                    dutyNature = nature,
-                    remarks = remarks,
-                    photoUri = photoUri,
-                    scenePhotoUri = scenePhotoUri,
-                    dutyDurationMinutes = durationMinutes,
-                    onSuccess = {
-                        isDutyDialogOpen = false
-                    }
-                )
+                val currentEdit = editingDutyRecord
+                if (currentEdit != null) {
+                    viewModel.updateDutyRecord(
+                        context = context,
+                        recordId = currentEdit.id,
+                        type = type,
+                        timestamp = timestamp,
+                        ibPage = page,
+                        ibParagraph = paragraph,
+                        dutyNature = nature,
+                        remarks = remarks,
+                        photoUri = photoUri,
+                        scenePhotoUri = scenePhotoUri,
+                        dutyDurationMinutes = durationMinutes,
+                        onSuccess = {
+                            isDutyDialogOpen = false
+                            editingDutyRecord = null
+                        }
+                    )
+                } else {
+                    viewModel.submitDutyReport(
+                        context = context,
+                        type = type,
+                        timestamp = timestamp,
+                        ibPage = page,
+                        ibParagraph = paragraph,
+                        dutyNature = nature,
+                        remarks = remarks,
+                        photoUri = photoUri,
+                        scenePhotoUri = scenePhotoUri,
+                        dutyDurationMinutes = durationMinutes,
+                        onSuccess = {
+                            isDutyDialogOpen = false
+                            editingDutyRecord = null
+                        }
+                    )
+                }
             }
         )
     }

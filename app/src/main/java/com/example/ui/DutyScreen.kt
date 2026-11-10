@@ -64,6 +64,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.rememberAsyncImagePainter
+import androidx.compose.material.icons.filled.Edit
 import com.example.data.DutyRecord
 import com.example.ui.theme.BadgeGold
 import com.example.ui.theme.DutyActiveGreen
@@ -78,6 +79,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowForward
 fun DutyScreen(
     viewModel: PoliceViewModel,
     onOpenDutyDialog: (type: String) -> Unit,
+    onEditDutyRecord: ((DutyRecord) -> Unit)? = null,
     onViewPhoto: (path: String, title: String, compKb: Int, origKb: Int) -> Unit
 ) {
     val dutyList by viewModel.filteredDutyRecords.collectAsStateWithLifecycle()
@@ -348,6 +350,7 @@ fun DutyScreen(
                             DutyItemCard(
                                 record = record,
                                 onViewPhoto = onViewPhoto,
+                                onEdit = { onEditDutyRecord?.invoke(record) },
                                 onDelete = { recordToDelete = record },
                                 onViewDaySummary = {
                                     val summary = dailyDutySummaries.firstOrNull { it.dateKey == recordDateKey }
@@ -366,6 +369,10 @@ fun DutyScreen(
         DayDutySummaryDialog(
             summary = summary,
             onDismiss = { selectedDaySummary = null },
+            onEditRecord = { record ->
+                selectedDaySummary = null
+                onEditDutyRecord?.invoke(record)
+            },
             onViewPhoto = onViewPhoto
         )
     }
@@ -400,6 +407,7 @@ fun DutyScreen(
 fun DutyItemCard(
     record: DutyRecord,
     onViewPhoto: (path: String, title: String, compKb: Int, origKb: Int) -> Unit,
+    onEdit: (() -> Unit)? = null,
     onDelete: () -> Unit,
     onViewDaySummary: (() -> Unit)? = null
 ) {
@@ -472,6 +480,16 @@ fun DutyItemCard(
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    if (onEdit != null) {
+                        IconButton(onClick = onEdit, modifier = Modifier.size(32.dp)) {
+                            Icon(
+                                imageVector = Icons.Default.Edit,
+                                contentDescription = "Edit record",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
                     IconButton(onClick = onDelete, modifier = Modifier.size(32.dp)) {
                         Icon(
                             imageVector = Icons.Default.Delete,

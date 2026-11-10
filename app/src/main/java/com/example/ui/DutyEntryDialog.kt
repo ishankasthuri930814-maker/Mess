@@ -87,6 +87,7 @@ import androidx.core.content.FileProvider
 import coil.compose.rememberAsyncImagePainter
 import com.example.ui.theme.BadgeGold
 import com.example.ui.theme.DutyActiveGreen
+import com.example.data.DutyRecord
 import com.example.ui.theme.DutyOffOrange
 import java.io.File
 import java.text.SimpleDateFormat
@@ -97,6 +98,7 @@ import java.util.Locale
 @Composable
 fun DutyEntryDialog(
     initialType: String = "ON_DUTY",
+    editingRecord: DutyRecord? = null,
     onDismiss: () -> Unit,
     onSubmit: (
         type: String,
@@ -111,31 +113,42 @@ fun DutyEntryDialog(
     ) -> Unit
 ) {
     val context = LocalContext.current
-    var dutyType by remember { mutableStateOf(initialType) }
+    val effectiveType = editingRecord?.type ?: initialType
+    var dutyType by remember { mutableStateOf(effectiveType) }
 
     // Calendar & Date Time State
-    val calendar = remember { Calendar.getInstance() }
+    val calendar = remember {
+        Calendar.getInstance().apply {
+            if (editingRecord != null) {
+                timeInMillis = editingRecord.timestamp
+            }
+        }
+    }
     val dateFormat = remember { SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()) }
     val timeFormat = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
 
     var selectedDateStr by remember { mutableStateOf(dateFormat.format(calendar.time)) }
     var selectedTimeStr by remember { mutableStateOf(timeFormat.format(calendar.time)) }
 
-    var ibPage by remember { mutableStateOf("") }
-    var ibParagraph by remember { mutableStateOf("") }
-    var dutyNature by remember { mutableStateOf(if (initialType == "ON_DUTY") "Station Reserve" else "Off Duty") }
-    var remarks by remember { mutableStateOf("") }
+    var ibPage by remember { mutableStateOf(editingRecord?.ibPage ?: "") }
+    var ibParagraph by remember { mutableStateOf(editingRecord?.ibParagraph ?: "") }
+    var dutyNature by remember { mutableStateOf(editingRecord?.dutyNature ?: if (effectiveType == "ON_DUTY") "Station Reserve" else "Off Duty") }
+    var remarks by remember { mutableStateOf(editingRecord?.remarks ?: "") }
 
-    // Shift duration in hours & minutes (e.g. 8h 30m)
-    var durationHours by remember { mutableIntStateOf(if (initialType == "OFF_DUTY") 8 else 0) }
-    var durationMinutes by remember { mutableIntStateOf(0) }
+    // Shift duration in hours & minutes
+    val initHours = editingRecord?.dutyDurationMinutes?.let { (it / 60).toInt() } ?: if (effectiveType == "OFF_DUTY") 8 else 0
+    val initMins = editingRecord?.dutyDurationMinutes?.let { (it % 60).toInt() } ?: 0
+    var durationHours by remember { mutableIntStateOf(initHours) }
+    var durationMinutes by remember { mutableIntStateOf(initMins) }
 
     // 1. IB Page Photo
-    var ibPhotoUri by remember { mutableStateOf<Uri?>(null) }
+    val initIbUri = editingRecord?.photoPath?.takeIf { it.isNotBlank() }?.let { Uri.fromFile(File(it)) }
+    var ibPhotoUri by remember { mutableStateOf<Uri?>(initIbUri) }
     var tempIbCameraUri by remember { mutableStateOf<Uri?>(null) }
 
     // 2. Incident / Scene Photo
-    var scenePhotoUri by remember { mutableStateOf<Uri?>(null) }
+    val initSceneUri = editingRecord?.scenePhotoPath?.takeIf { it.isNotBlank() }?.let { Uri.fromFile(File(it)) }
+    var scenePhotoUri by remember { mutableStateOf<Uri?>(initSceneUri) }
     var tempSceneCameraUri by remember { mutableStateOf<Uri?>(null) }
 
     var isSubmitting by remember { mutableStateOf(false) }

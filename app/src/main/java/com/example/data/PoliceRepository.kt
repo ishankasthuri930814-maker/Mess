@@ -34,6 +34,10 @@ class PoliceRepository(private val dao: PoliceDao) {
         return dao.insertDutyRecord(record)
     }
 
+    suspend fun updateDutyRecord(record: DutyRecord) {
+        dao.insertDutyRecord(record)
+    }
+
     suspend fun deleteDutyRecord(record: DutyRecord) {
         record.photoPath?.let { path ->
             try {
