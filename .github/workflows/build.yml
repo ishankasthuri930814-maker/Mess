@@ -21,7 +21,6 @@ jobs:
 
     - name: Find and Build with Gradle
       run: |
-        # gradlew file එක තියෙන තැන සොයා Gradle build කිරීම
         if [ -f "./gradlew" ]; then
           chmod +x gradlew
           ./gradlew assembleDebug
@@ -30,7 +29,6 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleDebug
         else
-          # gradlew නැත්නම් gradle wrapper generate කර ගැනීමට
           gradle wrapper
           chmod +x gradlew
           ./gradlew assembleDebug
