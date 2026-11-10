@@ -12,9 +12,13 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -26,9 +30,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Calculate
 import androidx.compose.material.icons.filled.CalendarMonth
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DirectionsCar
-import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.LocalGasStation
 import androidx.compose.material.icons.filled.Refresh
@@ -47,15 +53,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
-import androidx.compose.material3.TabRowDefaults
-import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -73,19 +74,17 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.RunningChartRecord
 import com.example.ui.theme.BadgeGold
 import com.example.ui.theme.DutyActiveGreen
 import com.example.ui.theme.DutyOffOrange
 import com.example.ui.theme.PoliceNavyDark
-import com.example.ui.theme.PoliceNavyPrimary
 import com.example.util.DateTimeUtils
 import kotlinx.coroutines.launch
-import java.text.SimpleDateFormat
 import java.util.Calendar
-import java.util.Date
-import java.util.Locale
 import kotlin.math.max
 
 @Composable
@@ -213,12 +212,18 @@ fun RunningChartCalculatorTab(
 
     var dateStr by remember { mutableStateOf(DateTimeUtils.getTodayKey()) }
     var vehicleNumber by remember { mutableStateOf("") }
+
     var startMeterStr by remember { mutableStateOf("") }
     var endMeterStr by remember { mutableStateOf("") }
+    var distanceDrivenStr by remember { mutableStateOf("") }
+    var consumedFuelInputStr by remember { mutableStateOf("") }
+
     var kmPerLiterStr by remember { mutableStateOf("7.0") }
     var startFuelStr by remember { mutableStateOf("45.0") }
     var addedFuelStr by remember { mutableStateOf("0.0") }
     var notes by remember { mutableStateOf("") }
+
+    var isConfirmDialogOpen by remember { mutableStateOf(false) }
 
     val distinctVehicles by viewModel.distinctVehicles.collectAsStateWithLifecycle()
 
@@ -243,36 +248,80 @@ fun RunningChartCalculatorTab(
             val latest = viewModel.getLatestRecordForVehicle(veh)
             if (latest != null) {
                 if (startMeterStr.isBlank()) {
-                    startMeterStr = latest.endMeter.toString()
+                    startMeterStr = "%.1f".format(latest.endMeter)
                 }
                 if (startFuelStr == "45.0" || startFuelStr.isBlank()) {
-                    startFuelStr = latest.remainingFuel.toString()
+                    startFuelStr = "%.1f".format(latest.remainingFuel)
                 }
                 if (kmPerLiterStr == "7.0") {
-                    kmPerLiterStr = latest.kmPerLiter.toString()
+                    kmPerLiterStr = "%.1f".format(latest.kmPerLiter)
                 }
             }
         }
     }
 
+    // Bi-directional Auto Calculation Handlers
+    fun onStartMeterChanged(newValue: String) {
+        startMeterStr = newValue
+        val startM = newValue.toDoubleOrNull() ?: 0.0
+        val dist = distanceDrivenStr.toDoubleOrNull() ?: 0.0
+        val endM = endMeterStr.toDoubleOrNull() ?: 0.0
+
+        if (dist > 0.0) {
+            endMeterStr = "%.1f".format(startM + dist)
+        } else if (endM > startM) {
+            distanceDrivenStr = "%.1f".format(endM - startM)
+        }
+    }
+
+    fun onDistanceDrivenChanged(newValue: String) {
+        distanceDrivenStr = newValue
+        val dist = newValue.toDoubleOrNull() ?: 0.0
+        val startM = startMeterStr.toDoubleOrNull() ?: 0.0
+        val kmL = kmPerLiterStr.toDoubleOrNull() ?: 7.0
+        if (dist >= 0.0) {
+            endMeterStr = "%.1f".format(startM + dist)
+            consumedFuelInputStr = "%.1f".format(if (kmL > 0) dist / kmL else 0.0)
+        }
+    }
+
+    fun onEndMeterChanged(newValue: String) {
+        endMeterStr = newValue
+        val endM = newValue.toDoubleOrNull() ?: 0.0
+        val startM = startMeterStr.toDoubleOrNull() ?: 0.0
+        val kmL = kmPerLiterStr.toDoubleOrNull() ?: 7.0
+        if (endM >= startM) {
+            val dist = endM - startM
+            distanceDrivenStr = "%.1f".format(dist)
+            consumedFuelInputStr = "%.1f".format(if (kmL > 0) dist / kmL else 0.0)
+        }
+    }
+
+    fun onConsumedFuelChanged(newValue: String) {
+        consumedFuelInputStr = newValue
+        val cFuel = newValue.toDoubleOrNull() ?: 0.0
+        val kmL = kmPerLiterStr.toDoubleOrNull() ?: 7.0
+        val startM = startMeterStr.toDoubleOrNull() ?: 0.0
+        if (cFuel >= 0.0 && kmL > 0.0) {
+            val dist = cFuel * kmL
+            distanceDrivenStr = "%.1f".format(dist)
+            endMeterStr = "%.1f".format(startM + dist)
+        }
+    }
+
     // Calculations
     val startMeter = startMeterStr.toDoubleOrNull() ?: 0.0
-    val endMeter = endMeterStr.toDoubleOrNull() ?: startMeter
+    val distanceDriven = distanceDrivenStr.toDoubleOrNull() ?: 0.0
+    val endMeter = endMeterStr.toDoubleOrNull() ?: (startMeter + distanceDriven)
+    val distanceKm = max(0.0, endMeter - startMeter)
+
     val kmPerLiter = kmPerLiterStr.toDoubleOrNull() ?: 7.0
+    val directConsumed = consumedFuelInputStr.toDoubleOrNull()
+    val consumedFuel = if (directConsumed != null && directConsumed > 0.0) directConsumed else (if (kmPerLiter > 0) distanceKm / kmPerLiter else 0.0)
+    
     val startFuel = startFuelStr.toDoubleOrNull() ?: 0.0
     val addedFuel = addedFuelStr.toDoubleOrNull() ?: 0.0
-
-    val distanceKm = remember(startMeter, endMeter) {
-        max(0.0, endMeter - startMeter)
-    }
-
-    val consumedFuel = remember(distanceKm, kmPerLiter) {
-        if (kmPerLiter > 0) distanceKm / kmPerLiter else 0.0
-    }
-
-    val remainingFuel = remember(startFuel, addedFuel, consumedFuel) {
-        startFuel + addedFuel - consumedFuel
-    }
+    val remainingFuel = startFuel + addedFuel - consumedFuel
 
     Column(
         modifier = Modifier
@@ -365,14 +414,14 @@ fun RunningChartCalculatorTab(
             }
         }
 
-        // Row 1: Start Meter & Km/L
+        // Row 1: Start Meter & Distance Driven (km)
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             OutlinedTextField(
                 value = startMeterStr,
-                onValueChange = { startMeterStr = it },
+                onValueChange = { onStartMeterChanged(it) },
                 label = { Text("ආරම්භක මීටරය (km)") },
                 placeholder = { Text("e.g. 123456") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
@@ -384,6 +433,57 @@ fun RunningChartCalculatorTab(
             )
 
             OutlinedTextField(
+                value = distanceDrivenStr,
+                onValueChange = { onDistanceDrivenChanged(it) },
+                label = { Text("ධාවනය කළ දුර (km)") },
+                placeholder = { Text("e.g. 70") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                singleLine = true,
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier
+                    .weight(1f)
+                    .testTag("distance_driven_input")
+            )
+        }
+
+        // Row 2: Ending Meter & Consumed Fuel (භාවිත කළ ඉන්ධන - L)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            OutlinedTextField(
+                value = endMeterStr,
+                onValueChange = { onEndMeterChanged(it) },
+                label = { Text("අවසාන මීටරය (km)") },
+                placeholder = { Text("Auto calculated") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                singleLine = true,
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier
+                    .weight(1f)
+                    .testTag("end_meter_input")
+            )
+
+            OutlinedTextField(
+                value = consumedFuelInputStr,
+                onValueChange = { onConsumedFuelChanged(it) },
+                label = { Text("භාවිත කළ ඉන්ධන (L)") },
+                placeholder = { Text("e.g. 10") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                singleLine = true,
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier
+                    .weight(1f)
+                    .testTag("consumed_fuel_input")
+            )
+        }
+
+        // Row 3: Km/L & Starting Fuel / Added Fuel
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            OutlinedTextField(
                 value = kmPerLiterStr,
                 onValueChange = { kmPerLiterStr = it },
                 label = { Text("ලීටරයකින් (km/L)") },
@@ -394,25 +494,6 @@ fun RunningChartCalculatorTab(
                 modifier = Modifier
                     .weight(1f)
                     .testTag("km_per_liter_input")
-            )
-        }
-
-        // Row 2: Starting Fuel & Added Fuel
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            OutlinedTextField(
-                value = startFuelStr,
-                onValueChange = { startFuelStr = it },
-                label = { Text("ආරම්භක ඉන්ධන (L)") },
-                placeholder = { Text("e.g. 45.0") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                singleLine = true,
-                shape = RoundedCornerShape(14.dp),
-                modifier = Modifier
-                    .weight(1f)
-                    .testTag("start_fuel_input")
             )
 
             OutlinedTextField(
@@ -429,21 +510,7 @@ fun RunningChartCalculatorTab(
             )
         }
 
-        // Row 3: End Meter
-        OutlinedTextField(
-            value = endMeterStr,
-            onValueChange = { endMeterStr = it },
-            label = { Text("අවසාන මීටරය (km) - Ending Meter") },
-            placeholder = { Text("e.g. 123526") },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-            singleLine = true,
-            shape = RoundedCornerShape(14.dp),
-            modifier = Modifier
-                .fillMaxWidth()
-                .testTag("end_meter_input")
-        )
-
-        // Calculated Result Cards (Matching Screenshot 1)
+        // Calculated Result Cards
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -542,7 +609,7 @@ fun RunningChartCalculatorTab(
             }
         }
 
-        // Action Buttons: Clear & Save
+        // Action Buttons: Clear & Verify / Next
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -552,6 +619,8 @@ fun RunningChartCalculatorTab(
                     vehicleNumber = ""
                     startMeterStr = ""
                     endMeterStr = ""
+                    distanceDrivenStr = ""
+                    consumedFuelInputStr = ""
                     notes = ""
                 },
                 shape = RoundedCornerShape(12.dp),
@@ -564,33 +633,245 @@ fun RunningChartCalculatorTab(
 
             Button(
                 onClick = {
-                    if (vehicleNumber.isBlank()) {
-                        return@Button
-                    }
-                    viewModel.saveRunningChartRecord(
-                        date = dateStr,
-                        vehicleNumber = vehicleNumber,
-                        startMeter = startMeter,
-                        endMeter = endMeter,
-                        kmPerLiter = kmPerLiter,
-                        startFuel = startFuel,
-                        addedFuel = addedFuel,
-                        notes = notes,
-                        onSuccess = onSaved
-                    )
+                    if (vehicleNumber.isBlank()) return@Button
+                    isConfirmDialogOpen = true
                 },
-                enabled = vehicleNumber.isNotBlank(),
+                enabled = vehicleNumber.isNotBlank() && (endMeter >= startMeter || distanceKm > 0),
                 colors = ButtonDefaults.buttonColors(containerColor = DutyActiveGreen),
                 shape = RoundedCornerShape(12.dp),
                 modifier = Modifier
                     .weight(1f)
                     .testTag("save_running_chart_btn")
             ) {
-                Text("Next / සුරකින්න", fontWeight = FontWeight.Bold)
+                Text("ඊළඟ (Next / සත්‍යාපනය)", fontWeight = FontWeight.Bold)
             }
         }
 
         Spacer(modifier = Modifier.height(20.dp))
+    }
+
+    // Verification & Confirmation Dialog
+    if (isConfirmDialogOpen) {
+        ConfirmRunningChartDialog(
+            date = dateStr,
+            vehicleNumber = vehicleNumber,
+            startMeter = startMeter,
+            endMeter = endMeter,
+            distanceKm = distanceKm,
+            kmPerLiter = kmPerLiter,
+            startFuel = startFuel,
+            addedFuel = addedFuel,
+            consumedFuel = consumedFuel,
+            remainingFuel = remainingFuel,
+            onDismiss = { isConfirmDialogOpen = false },
+            onConfirm = {
+                viewModel.saveRunningChartRecord(
+                    date = dateStr,
+                    vehicleNumber = vehicleNumber,
+                    startMeter = startMeter,
+                    endMeter = endMeter,
+                    kmPerLiter = kmPerLiter,
+                    startFuel = startFuel,
+                    addedFuel = addedFuel,
+                    notes = notes,
+                    onSuccess = {
+                        isConfirmDialogOpen = false
+                        onSaved()
+                    }
+                )
+            }
+        )
+    }
+}
+
+@Composable
+fun ConfirmRunningChartDialog(
+    date: String,
+    vehicleNumber: String,
+    startMeter: Double,
+    endMeter: Double,
+    distanceKm: Double,
+    kmPerLiter: Double,
+    startFuel: Double,
+    addedFuel: Double,
+    consumedFuel: Double,
+    remainingFuel: Double,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit
+) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.6f))
+                .statusBarsPadding()
+                .navigationBarsPadding()
+                .imePadding()
+                .padding(vertical = 12.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth(0.95f)
+                    .widthIn(max = 480.dp)
+                    .clip(RoundedCornerShape(20.dp)),
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 8.dp
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(18.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    // Header
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .background(DutyActiveGreen.copy(alpha = 0.2f), CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.CheckCircle,
+                                contentDescription = null,
+                                tint = DutyActiveGreen,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "ගමන් සටහන සත්‍යාපනය (Verify)",
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = "ඇතුළත් කළ තොරතුරු නිවැරදිදැයි පරීක්ෂා කරන්න",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        IconButton(onClick = onDismiss, modifier = Modifier.size(34.dp)) {
+                            Icon(Icons.Default.Close, contentDescription = "Close", modifier = Modifier.size(20.dp))
+                        }
+                    }
+
+                    // Vehicle & Date Card
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(14.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f))
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.DirectionsCar, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(text = vehicleNumber, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                            }
+                            Text(text = date, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
+                        }
+                    }
+
+                    // Meter Summary Box
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(14.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(14.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text(text = "මීටර් ගණනය (Meter Calculation):", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = DutyActiveGreen)
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text(text = "ආරම්භක මීටරය:", fontSize = 12.sp)
+                                Text(text = "%.1f km".format(startMeter), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            }
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text(text = "ධාවනය කළ දුර:", fontSize = 12.sp)
+                                Text(text = "%.1f km".format(distanceKm), fontSize = 13.sp, fontWeight = FontWeight.Bold, color = DutyActiveGreen)
+                            }
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text(text = "අවසාන මීටරය:", fontSize = 12.sp)
+                                Text(text = "%.1f km".format(endMeter), fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+
+                    // Fuel Summary Box
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(14.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(14.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text(text = "ඉන්ධන ගණනය (Fuel Calculation):", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = BadgeGold)
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text(text = "ආරම්භක ඉන්ධන:", fontSize = 12.sp)
+                                Text(text = "%.1f L".format(startFuel), fontSize = 12.sp)
+                            }
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text(text = "ලබාගත් ඉන්ධන:", fontSize = 12.sp)
+                                Text(text = "+%.1f L".format(addedFuel), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = DutyActiveGreen)
+                            }
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text(text = "දැවුණු ඉන්ධන (1L = ${kmPerLiter}km):", fontSize = 12.sp)
+                                Text(text = "-%.1f L".format(consumedFuel), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = DutyOffOrange)
+                            }
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text(text = "ටැංකියේ ඉතිරි ඉන්ධන:", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                Text(text = "%.1f L".format(remainingFuel), fontSize = 14.sp, fontWeight = FontWeight.Bold, color = BadgeGold)
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    // Buttons
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = onDismiss,
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text("වෙනස් කරන්න (Edit)")
+                        }
+
+                        Button(
+                            onClick = onConfirm,
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = DutyActiveGreen)
+                        ) {
+                            Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("තහවුරු කර සුරකින්න", fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -770,7 +1051,7 @@ fun RunningChartHistoryCard(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            // Fuel details (Matching Screenshot 2)
+            // Fuel details
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween
@@ -864,7 +1145,7 @@ fun RunningChartSummaryTab(
             }
         }
 
-        // Summary Card (Matching Screenshot 4)
+        // Summary Card
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(22.dp),
