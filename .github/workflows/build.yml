@@ -23,6 +23,22 @@ jobs:
       run: |
         keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug, O=Android, C=US"
 
+    - name: Fix Missing Google API Key Resource
+      run: |
+        RES_DIR="app/src/main/res/values"
+        mkdir -p "$RES_DIR"
+        STRINGS_FILE="$RES_DIR/strings.xml"
+        if [ ! -f "$STRINGS_FILE" ]; then
+          echo '<?xml version="1.0" encoding="utf-8"?>' > "$STRINGS_FILE"
+          echo '<resources>' >> "$STRINGS_FILE"
+          echo '    <string name="google_api_key">AIzaSy_placeholder_key</string>' >> "$STRINGS_FILE"
+          echo '</resources>' >> "$STRINGS_FILE"
+        else
+          if ! grep -q "google_api_key" "$STRINGS_FILE"; then
+            sed -i '/<\/resources>/i \    <string name="google_api_key">AIzaSy_placeholder_key</string>' "$STRINGS_FILE"
+          fi
+        fi
+
     - name: Build with Gradle
       run: |
         export ANDROID_HOME=$HOME/android-sdk
