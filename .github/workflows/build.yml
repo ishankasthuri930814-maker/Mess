@@ -2,7 +2,7 @@ name: Build Android APK
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, master ]
   workflow_dispatch:
 
 jobs:
@@ -10,52 +10,45 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Set up JDK 17
-      uses: actions/setup-java@v4
-      with:
-        distribution: 'temurin'
-        java-version: '17'
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
 
-    - name: Generate Debug Keystore
-      run: |
-        keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug, O=Android, C=US"
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
 
-    - name: Fix Missing Google API Key Resource
-      run: |
-        RES_DIR="app/src/main/res/values"
-        mkdir -p "$RES_DIR"
-        STRINGS_FILE="$RES_DIR/strings.xml"
-        if [ ! -f "$STRINGS_FILE" ]; then
-          echo '<?xml version="1.0" encoding="utf-8"?>' > "$STRINGS_FILE"
-          echo '<resources>' >> "$STRINGS_FILE"
-          echo '    <string name="google_api_key">AIzaSy_placeholder_key</string>' >> "$STRINGS_FILE"
-          echo '</resources>' >> "$STRINGS_FILE"
-        else
-          if ! grep -q "google_api_key" "$STRINGS_FILE"; then
-            sed -i '/<\/resources>/i \    <string name="google_api_key">AIzaSy_placeholder_key</string>' "$STRINGS_FILE"
+      - name: Set up Gradle 9.3.1
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.3.1'
+
+      - name: Restore Debug Keystore
+        run: |
+          if [ -f "debug.keystore.base64" ]; then
+            base64 -d debug.keystore.base64 > debug.keystore
+          else
+            keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug, O=Android, C=US"
           fi
-        fi
 
-    - name: Build with Gradle
-      run: |
-        export ANDROID_HOME=$HOME/android-sdk
-        if [ -f "./gradlew" ]; then
-          chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon
-        elif [ -f "./app/gradlew" ]; then
-          cd app
-          chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon
-        else
-          gradle wrapper
-          ./gradlew assembleDebug --no-daemon
-        fi
+      - name: Fallback Google API Key if google-services.json is absent
+        run: |
+          if [ ! -f "app/google-services.json" ]; then
+            STRINGS_FILE="app/src/main/res/values/strings.xml"
+            if [ -f "$STRINGS_FILE" ] && ! grep -q "google_api_key" "$STRINGS_FILE"; then
+              sed -i '/<\/resources>/i \    <string name="google_api_key">AIzaSy_placeholder_key</string>' "$STRINGS_FILE"
+            fi
+          fi
 
-    - name: Upload APK
-      uses: actions/upload-artifact@v4
-      with:
-        name: app-debug
-        path: '**/build/outputs/apk/debug/*.apk'
+      - name: Build Debug APK
+        run: gradle assembleDebug --no-daemon
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: All-In-One-Police-APK
+          path: app/build/outputs/apk/debug/*.apk
