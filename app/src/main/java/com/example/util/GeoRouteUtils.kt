@@ -58,6 +58,21 @@ object GeoRouteUtils {
         }
     }
 
+    fun computePolylineDistanceMeters(points: List<LocationHistoryPoint>): Double {
+        val valid = points.filter { it.lat != 0.0 || it.lng != 0.0 }.sortedBy { it.timestamp }
+        if (valid.size < 2) return 0.0
+        var total = 0.0
+        for (i in 1 until valid.size) {
+            val prev = valid[i - 1]
+            val curr = valid[i]
+            val step = distanceMeters(prev.lat, prev.lng, curr.lat, curr.lng)
+            if (step >= 1.5 && step <= 10_000.0) {
+                total += step
+            }
+        }
+        return total
+    }
+
     fun extractLatLng(locMap: Map<String, Any>?): Triple<Double, Double, Long>? {
         if (locMap == null) return null
         val lat = (locMap["lat"] as? Number)?.toDouble() ?: return null

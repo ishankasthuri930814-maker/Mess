@@ -21,17 +21,17 @@ object MapMarkerBitmapHelper {
         val density = context.resources.displayMetrics.density
         val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.WHITE
-            textSize = 11f * density
+            textSize = 8.5f * density
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
         }
         val subText = if (label.length > 14) label.take(13) + "…" else label
         val textWidth = textPaint.measureText(subText)
-        val badgeDiameter = (24f * density).toInt()
-        val padH = (8f * density).toInt()
-        val pillWidth = maxOf((textWidth + padH * 2).toInt(), (48f * density).toInt())
-        val pillHeight = (20f * density).toInt()
+        val badgeDiameter = (20f * density).toInt()
+        val padH = (6f * density).toInt()
+        val pillWidth = maxOf((textWidth + padH * 2).toInt(), (42f * density).toInt())
+        val pillHeight = (16f * density).toInt()
         val totalWidth = maxOf(pillWidth, badgeDiameter + (8f * density).toInt())
-        val totalHeight = pillHeight + badgeDiameter + (10f * density).toInt()
+        val totalHeight = pillHeight + badgeDiameter + (8f * density).toInt()
 
         val bitmap = Bitmap.createBitmap(totalWidth, totalHeight, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
@@ -50,10 +50,10 @@ object MapMarkerBitmapHelper {
         val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = borderColor
             style = Paint.Style.STROKE
-            strokeWidth = 1.6f * density
+            strokeWidth = 1.4f * density
         }
-        canvas.drawRoundRect(pillRect, 8f * density, 8f * density, bgPaint)
-        canvas.drawRoundRect(pillRect, 8f * density, 8f * density, strokePaint)
+        canvas.drawRoundRect(pillRect, 7f * density, 7f * density, bgPaint)
+        canvas.drawRoundRect(pillRect, 7f * density, 7f * density, strokePaint)
 
         val textY = pillHeight / 2f - (textPaint.descent() + textPaint.ascent()) / 2f
         val textX = totalWidth / 2f - textWidth / 2f
@@ -69,7 +69,7 @@ object MapMarkerBitmapHelper {
         val statusLetter = if (isOnDuty) "ON" else "OFF"
         val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.WHITE
-            textSize = (if (isOnDuty) 9f else 8f) * density
+            textSize = (if (isOnDuty) 7.5f else 6.8f) * density
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
             textAlign = Paint.Align.CENTER
         }
@@ -83,13 +83,13 @@ object MapMarkerBitmapHelper {
         val density = context.resources.displayMetrics.density
         val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.WHITE
-            textSize = 10f * density
+            textSize = 8f * density
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
             textAlign = Paint.Align.CENTER
         }
         val tw = textPaint.measureText(durationLabel)
-        val w = maxOf((tw + 14f * density).toInt(), (36f * density).toInt())
-        val h = (22f * density).toInt()
+        val w = maxOf((tw + 10f * density).toInt(), (30f * density).toInt())
+        val h = (18f * density).toInt()
         val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
 
@@ -98,10 +98,10 @@ object MapMarkerBitmapHelper {
         val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.WHITE
             style = Paint.Style.STROKE
-            strokeWidth = 1.5f * density
+            strokeWidth = 1.4f * density
         }
-        canvas.drawRoundRect(rect, 11f * density, 11f * density, fill)
-        canvas.drawRoundRect(rect, 11f * density, 11f * density, stroke)
+        canvas.drawRoundRect(rect, 9f * density, 9f * density, fill)
+        canvas.drawRoundRect(rect, 9f * density, 9f * density, stroke)
         val ty = h / 2f - (textPaint.descent() + textPaint.ascent()) / 2f
         canvas.drawText(durationLabel, w / 2f, ty, textPaint)
         return BitmapDrawable(context.resources, bitmap)
@@ -109,7 +109,7 @@ object MapMarkerBitmapHelper {
 
     fun createEmergencyPinDrawable(context: Context, label: String = "SOS"): Drawable {
         val density = context.resources.displayMetrics.density
-        val size = (38f * density).toInt()
+        val size = (32f * density).toInt()
         val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
         val cx = size / 2f
@@ -120,11 +120,11 @@ object MapMarkerBitmapHelper {
         val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.WHITE
             style = Paint.Style.STROKE
-            strokeWidth = 2.2f * density
+            strokeWidth = 2f * density
         }
         val txt = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.WHITE
-            textSize = 10f * density
+            textSize = 8f * density
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
             textAlign = Paint.Align.CENTER
         }

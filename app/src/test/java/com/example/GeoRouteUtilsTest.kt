@@ -88,4 +88,22 @@ class GeoRouteUtilsTest {
         assertTrue(stays[1].isOffDutySpot)
         assertEquals(6.94100, stays[1].centerLat, 0.0001)
     }
+
+    @Test
+    fun computePolylineDistanceMeters_tracksTinyWalksAndFiltersNoise() {
+        val t0 = 1_700_000_000_000L
+        // Step 1: ~0.000045 deg lat ~= 5.0 meters
+        // Step 2: tiny 0.5m GPS jitter (ignored because < 1.5m)
+        // Step 3: ~0.000090 deg lat ~= 10.0 meters
+        val points = listOf(
+            LocationHistoryPoint(id = "p1", lat = 6.927100, lng = 79.861200, timestamp = t0),
+            LocationHistoryPoint(id = "p2", lat = 6.927145, lng = 79.861200, timestamp = t0 + 3_000L),
+            LocationHistoryPoint(id = "p3", lat = 6.927149, lng = 79.861200, timestamp = t0 + 6_000L),
+            LocationHistoryPoint(id = "p4", lat = 6.927239, lng = 79.861200, timestamp = t0 + 9_000L)
+        )
+
+        val totalMeters = GeoRouteUtils.computePolylineDistanceMeters(points)
+        assertTrue("Expected ~15.0m for short walk, got $totalMeters", totalMeters in 13.0..17.5)
+        assertEquals(0.0, GeoRouteUtils.computePolylineDistanceMeters(points.take(1)), 0.01)
+    }
 }

@@ -20,6 +20,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -46,7 +47,6 @@ import com.example.util.GeoRouteUtils
 import com.example.util.StayLocation
 import org.osmdroid.config.Configuration
 import org.osmdroid.tileprovider.tilesource.OnlineTileSourceBase
-import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.tileprovider.tilesource.XYTileSource
 import org.osmdroid.util.BoundingBox
 import org.osmdroid.util.GeoPoint
@@ -90,23 +90,32 @@ private sealed class SelectedMapOverlay {
     ) : SelectedMapOverlay()
 }
 
-private fun createCartoVoyagerTileSource(): XYTileSource {
+private fun createOsmHumanitarianTileSource(): OnlineTileSourceBase {
     return XYTileSource(
-        "CartoVoyager",
+        "OSM_Humanitarian_SL",
         0, 19, 256, ".png",
         arrayOf(
-            "https://a.basemaps.cartocdn.com/rastertiles/voyager/",
-            "https://b.basemaps.cartocdn.com/rastertiles/voyager/",
-            "https://c.basemaps.cartocdn.com/rastertiles/voyager/"
+            "https://a.tile.openstreetmap.fr/hot/",
+            "https://b.tile.openstreetmap.fr/hot/",
+            "https://c.tile.openstreetmap.fr/hot/"
         ),
-        "© OpenStreetMap, © CARTO"
+        "© OpenStreetMap contributors, HOT"
+    )
+}
+
+private fun createOsmStandardTileSource(): OnlineTileSourceBase {
+    return XYTileSource(
+        "OSM_Standard_SL",
+        0, 19, 256, ".png",
+        arrayOf("https://tile.openstreetmap.org/"),
+        "© OpenStreetMap contributors"
     )
 }
 
 private fun createEsriSatelliteTileSource(): OnlineTileSourceBase {
     return object : OnlineTileSourceBase(
-        "EsriWorldImagery",
-        0, 18, 256, ".jpg",
+        "EsriWorldImagery_SL",
+        0, 16, 256, ".jpg",
         arrayOf("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/")
     ) {
         override fun getTileURLString(pMapTileIndex: Long): String {
@@ -124,6 +133,7 @@ fun PoliceLiveMapView(
     locationHistory: List<LocationHistoryPoint>,
     emergencyAlerts: List<EmergencyAlert>,
     myLocation: Pair<Double, Double>?,
+    myLocationAccuracyMeters: Float? = null,
     activeRouteState: ActiveRouteState?,
     selectedDateKey: String,
     isOicView: Boolean,
@@ -139,22 +149,28 @@ fun PoliceLiveMapView(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
 
-    var mapStyle by remember { mutableStateOf(PoliceMapStyle.CLEAR) }
+    var mapStyle by remember { mutableStateOf(PoliceMapStyle.STREET) }
     var filterMode by remember { mutableStateOf(MapOfficerFilter.ALL) }
     var focusedOfficerUid by remember { mutableStateOf<String?>(null) }
     var showTrailsAndStays by remember { mutableStateOf(true) }
+    var followMyLocation by remember { mutableStateOf(false) }
     var selectedOverlay by remember { mutableStateOf<SelectedMapOverlay?>(null) }
 
-    val cartoSource = remember { createCartoVoyagerTileSource() }
-    val esriSource = remember { createEsriSatelliteTileSource() }
+    val osmStandardSource = remember { createOsmStandardTileSource() }
+    val osmClearSource = remember { createOsmHumanitarianTileSource() }
+    val esriSatelliteSource = remember { createEsriSatelliteTileSource() }
 
-    // Configure osmdroid cleanly inside app cacheDir (zero storage permissions needed)
+    // Configure osmdroid cleanly inside app cacheDir with compliant User-Agent and clean v3 tile cache
     remember(context) {
         val osmdroidPrefs = context.applicationContext.getSharedPreferences("osmdroid_prefs", Context.MODE_PRIVATE)
         Configuration.getInstance().load(context.applicationContext, osmdroidPrefs)
-        Configuration.getInstance().userAgentValue = context.packageName
+        Configuration.getInstance().userAgentValue = "AllInOnePolice-SL/1.0 (${context.packageName})"
         val baseDir = File(context.cacheDir, "osmdroid")
-        val tileCacheDir = File(baseDir, "tiles")
+        listOf("tiles", "tiles_v2").forEach { legacy ->
+            val legacyDir = File(baseDir, legacy)
+            if (legacyDir.exists()) legacyDir.deleteRecursively()
+        }
+        val tileCacheDir = File(baseDir, "tiles_v3")
         if (!tileCacheDir.exists()) tileCacheDir.mkdirs()
         Configuration.getInstance().osmdroidBasePath = baseDir
         Configuration.getInstance().osmdroidTileCache = tileCacheDir
@@ -163,16 +179,39 @@ fun PoliceLiveMapView(
 
     val mapView = remember {
         MapView(context).apply {
+            setTileSource(osmStandardSource)
             setMultiTouchControls(true)
+            setTilesScaledToDpi(true)
+            isHorizontalMapRepetitionEnabled = false
+            isVerticalMapRepetitionEnabled = false
+            overlayManager.tilesOverlay.loadingBackgroundColor = android.graphics.Color.parseColor("#E2E8F0")
+            overlayManager.tilesOverlay.loadingLineColor = android.graphics.Color.parseColor("#CBD5E1")
             zoomController.setVisibility(CustomZoomButtonsController.Visibility.NEVER)
             minZoomLevel = 6.0
-            maxZoomLevel = 20.0
-            controller.setZoom(11.5)
+            maxZoomLevel = 19.0
+            controller.setZoom(15.5)
             controller.setCenter(GeoPoint(7.8731, 80.7718))
+            setOnTouchListener { v, event ->
+                when (event.actionMasked) {
+                    android.view.MotionEvent.ACTION_DOWN,
+                    android.view.MotionEvent.ACTION_MOVE -> {
+                        v.parent?.requestDisallowInterceptTouchEvent(true)
+                        if (event.actionMasked == android.view.MotionEvent.ACTION_MOVE) {
+                            followMyLocation = false
+                        }
+                    }
+                    android.view.MotionEvent.ACTION_UP,
+                    android.view.MotionEvent.ACTION_CANCEL -> {
+                        v.parent?.requestDisallowInterceptTouchEvent(false)
+                    }
+                }
+                false
+            }
         }
     }
 
     var hasDoneInitialFit by remember { mutableStateOf(false) }
+    var hasCenteredOnMyLocation by remember { mutableStateOf(false) }
     var lastFocusedRouteId by remember { mutableStateOf<String?>(null) }
 
     DisposableEffect(lifecycleOwner, mapView) {
@@ -269,13 +308,17 @@ fun PoliceLiveMapView(
         myLocation?.let { pts.add(GeoPoint(it.first, it.second)) }
 
         if (pts.size == 1) {
-            mapView.controller.animateTo(pts.first(), 15.5, 450L)
+            mapView.controller.animateTo(pts.first(), 17.8, 450L)
         } else if (pts.size > 1) {
             try {
                 val box = BoundingBox.fromGeoPointsSafe(pts)
-                mapView.zoomToBoundingBox(box, true, 120, 17.5, 450L)
+                if (box.diagonalLengthInMeters < 35.0) {
+                    mapView.controller.animateTo(box.centerWithDateLine, 18.2, 450L)
+                } else {
+                    mapView.zoomToBoundingBox(box, true, 100, 18.2, 450L)
+                }
             } catch (_: Exception) {
-                mapView.controller.animateTo(pts.first(), 14.0, 450L)
+                mapView.controller.animateTo(pts.first(), 17.2, 450L)
             }
         }
     }
@@ -314,21 +357,43 @@ fun PoliceLiveMapView(
         }
     }
 
-    Box(modifier = modifier.fillMaxSize()) {
+    // When first live GPS location arrives, center/fit if not manually browsing a specific officer/route
+    LaunchedEffect(myLocation) {
+        if (myLocation != null && !hasCenteredOnMyLocation && activeRouteState == null && focusedOfficerUid == null) {
+            hasCenteredOnMyLocation = true
+            fitAllVisiblePoints()
+        }
+    }
+
+    // Auto-pan smoothly to follow live GPS dot when Follow Mode is enabled
+    LaunchedEffect(myLocation, followMyLocation) {
+        if (followMyLocation && myLocation != null) {
+            val targetZoom = maxOf(mapView.zoomLevelDouble, 18.0)
+            mapView.controller.animateTo(GeoPoint(myLocation.first, myLocation.second), targetZoom, 350L)
+        }
+    }
+
+    val totalVisibleTrailMeters = remember(groupedHistory) {
+        groupedHistory.values.sumOf { GeoRouteUtils.computePolylineDistanceMeters(it) }
+    }
+
+    Box(modifier = modifier.fillMaxSize().clipToBounds()) {
         AndroidView(
             factory = { mapView },
             modifier = Modifier
                 .fillMaxSize()
+                .clipToBounds()
                 .testTag("police_osm_map"),
             update = { view ->
                 val targetSource = when (mapStyle) {
-                    PoliceMapStyle.STREET -> TileSourceFactory.MAPNIK
-                    PoliceMapStyle.CLEAR -> cartoSource
-                    PoliceMapStyle.SATELLITE -> esriSource
+                    PoliceMapStyle.STREET -> osmStandardSource
+                    PoliceMapStyle.CLEAR -> osmClearSource
+                    PoliceMapStyle.SATELLITE -> esriSatelliteSource
                 }
                 if (view.tileProvider.tileSource.name() != targetSource.name()) {
                     view.setTileSource(targetSource)
                 }
+                view.maxZoomLevel = if (mapStyle == PoliceMapStyle.SATELLITE) 17.5 else 19.0
 
                 view.overlays.clear()
 
@@ -479,13 +544,22 @@ fun PoliceLiveMapView(
                     }
                 }
 
-                // 6. My Own Live GPS Dot
+                // 6. My Own Live GPS Dot + Accuracy Halo
                 myLocation?.let { (lat, lng) ->
+                    val accMeters = (myLocationAccuracyMeters ?: 12f).coerceIn(4f, 85f).toDouble()
+                    val accuracyCircle = Polygon(view).apply {
+                        points = Polygon.pointsAsCircle(GeoPoint(lat, lng), accMeters)
+                        fillPaint.color = android.graphics.Color.argb(38, 37, 99, 235)
+                        outlinePaint.color = android.graphics.Color.argb(140, 37, 99, 235)
+                        outlinePaint.strokeWidth = 2f
+                    }
+                    view.overlays.add(accuracyCircle)
+
                     val selfMarker = Marker(view).apply {
                         position = GeoPoint(lat, lng)
                         setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
                         icon = MapMarkerBitmapHelper.createMyLocationDotDrawable(context)
-                        title = "ඔබ සිටින ස්ථානය (My GPS)"
+                        title = "ඔබ සිටින ස්ථානය (GPS ±${myLocationAccuracyMeters?.toInt() ?: 0}m)"
                     }
                     view.overlays.add(selfMarker)
                 }
@@ -658,6 +732,42 @@ fun PoliceLiveMapView(
                     }
                 }
             }
+            // Live GPS accuracy + walked trail distance status pill (tappable to refresh GPS)
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = Color(0xFF0F172A).copy(alpha = 0.86f),
+                shadowElevation = 3.dp,
+                modifier = Modifier.clickable { onRefreshGps() }
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    val accText = when {
+                        myLocation == null -> "GPS සොයමින්..."
+                        myLocationAccuracyMeters != null -> "GPS ±${myLocationAccuracyMeters.toInt()}m"
+                        else -> "GPS සක්‍රියයි"
+                    }
+                    Text(
+                        text = accText,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (myLocation != null) Color(0xFF4ADE80) else Color(0xFFFACC15)
+                    )
+                    Text(
+                        text = "•",
+                        fontSize = 11.sp,
+                        color = Color.White.copy(alpha = 0.6f)
+                    )
+                    Text(
+                        text = "ගමන් දුර: ${GeoRouteUtils.formatDistance(totalVisibleTrailMeters)}",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color.White
+                    )
+                }
+            }
         }
 
         // --- RIGHT SIDE FLOATING MAP ACTION BUTTONS ---
@@ -679,7 +789,10 @@ fun PoliceLiveMapView(
                 }
             }
             SmallFloatingActionButton(
-                onClick = { fitAllVisiblePoints() },
+                onClick = {
+                    followMyLocation = false
+                    fitAllVisiblePoints()
+                },
                 containerColor = Color.White,
                 contentColor = PoliceNavyDark
             ) {
@@ -687,13 +800,14 @@ fun PoliceLiveMapView(
             }
             SmallFloatingActionButton(
                 onClick = {
+                    followMyLocation = !followMyLocation
                     onRefreshGps()
                     myLocation?.let { (lat, lng) ->
-                        mapView.controller.animateTo(GeoPoint(lat, lng), 16.0, 450L)
+                        mapView.controller.animateTo(GeoPoint(lat, lng), 18.8, 400L)
                     }
                 },
-                containerColor = Color.White,
-                contentColor = PoliceNavyPrimary
+                containerColor = if (followMyLocation) PoliceNavyPrimary else Color.White,
+                contentColor = if (followMyLocation) Color.White else PoliceNavyPrimary
             ) {
                 Icon(Icons.Default.MyLocation, contentDescription = "My GPS Location")
             }

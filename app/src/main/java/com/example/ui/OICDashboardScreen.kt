@@ -19,8 +19,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -82,6 +84,7 @@ fun OICDashboardScreen(
     val stationLocationHistory by viewModel.stationLocationHistory.collectAsStateWithLifecycle()
     val emergencyAlerts by viewModel.nearbyEmergencyAlerts.collectAsStateWithLifecycle()
     val myLocation by viewModel.myCurrentLocation.collectAsStateWithLifecycle()
+    val myLocationAccuracy by viewModel.myLocationAccuracyMeters.collectAsStateWithLifecycle()
     val activeRouteState by viewModel.activeRouteState.collectAsStateWithLifecycle()
     val selectedMapDate by viewModel.selectedMapDate.collectAsStateWithLifecycle()
     val activeEmergencyPopup by viewModel.activeEmergencyPopup.collectAsStateWithLifecycle()
@@ -89,6 +92,7 @@ fun OICDashboardScreen(
     val unreadNotifCount by viewModel.unreadNotificationCount.collectAsStateWithLifecycle()
     val stationAdminSeed by viewModel.stationAdminSeed.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
+    val dashboardListState = rememberLazyListState()
 
     var selectedTab by remember { mutableIntStateOf(0) }
     var isDetailDialogOpen by remember { mutableStateOf(false) }
@@ -98,6 +102,42 @@ fun OICDashboardScreen(
     var isSendNotificationDialogOpen by remember { mutableStateOf(false) }
     var isSendSosDialogOpen by remember { mutableStateOf(false) }
     var isDirectoryOpen by remember { mutableStateOf(false) }
+
+    // Hoisted Tab 1 (Duty Roster) state
+    val todayKey = DateTimeUtils.getTodayKey()
+    var showPastDutyMode by remember { mutableStateOf(false) }
+    val availablePastDates = remember(stationDutyRecords, todayKey) {
+        stationDutyRecords
+            .map { DateTimeUtils.formatDate(it.timestamp) }
+            .filter { it.isNotBlank() && it < todayKey }
+            .distinct()
+            .sortedDescending()
+    }
+    var selectedPastDate by remember(availablePastDates) {
+        mutableStateOf(availablePastDates.firstOrNull() ?: todayKey)
+    }
+    val calendar = remember { Calendar.getInstance() }
+    val dutyDatePicker = remember {
+        DatePickerDialog(
+            context,
+            { _, year, month, dayOfMonth ->
+                val formatted = "%04d-%02d-%02d".format(year, month + 1, dayOfMonth)
+                selectedPastDate = formatted
+                showPastDutyMode = true
+            },
+            calendar.get(Calendar.YEAR),
+            calendar.get(Calendar.MONTH),
+            calendar.get(Calendar.DAY_OF_MONTH)
+        )
+    }
+
+    // Hoisted Tab 4 (Station Contacts) state
+    var contactSearchQuery by remember { mutableStateOf("") }
+    var contactRoleFilter by remember { mutableStateOf(StationContactRoleFilter.ALL) }
+    var isEditOwnContactOpen by remember { mutableStateOf(false) }
+    val filteredContacts = remember(stationContacts, contactSearchQuery, contactRoleFilter) {
+        filterStationContacts(stationContacts, contactSearchQuery, contactRoleFilter)
+    }
 
     fun dialPhone(phone: String) {
         val clean = phone.replace(" ", "").replace("-", "")
@@ -140,6 +180,12 @@ fun OICDashboardScreen(
                 arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
             )
         } else {
+            viewModel.refreshCurrentLocation(showFeedback = false)
+        }
+    }
+
+    LaunchedEffect(selectedTab) {
+        if (selectedTab == 3) {
             viewModel.refreshCurrentLocation(showFeedback = false)
         }
     }
@@ -277,381 +323,412 @@ fun OICDashboardScreen(
             )
         }
     ) { padding ->
-        Column(
+        val targetDateKey = if (!showPastDutyMode) todayKey else selectedPastDate
+        val recordsOnTargetDate = remember(stationDutyRecords, targetDateKey) {
+            stationDutyRecords.filter { DateTimeUtils.formatDate(it.timestamp) == targetDateKey }
+        }
+        val rosterEntries = remember(approvedList, recordsOnTargetDate, showPastDutyMode) {
+            val groupedByOfficer = recordsOnTargetDate.groupBy { it.officerId }
+            val officerMap = approvedList.associateBy { it.uid }
+            val entries = mutableListOf<Pair<AppUser, List<DutyRecord>>>()
+
+            groupedByOfficer.forEach { (uid, recs) ->
+                val user = officerMap[uid]
+                if (user != null) {
+                    entries.add(user to recs.sortedByDescending { it.timestamp })
+                }
+            }
+            if (!showPastDutyMode) {
+                approvedList.filter { it.isOnDuty && groupedByOfficer[it.uid] == null }.forEach { onDutyOfficer ->
+                    entries.add(onDutyOfficer to emptyList())
+                }
+            }
+            entries
+        }
+
+        LazyColumn(
+            state = dashboardListState,
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
                 .background(MaterialTheme.colorScheme.background)
+                .testTag("oic_dashboard_scroll"),
+            contentPadding = PaddingValues(top = 10.dp, bottom = 28.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            // Prominent OIC Unique Code Banner
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(14.dp),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = PoliceNavyDark),
-                elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = Icons.Default.Key,
-                                contentDescription = null,
-                                tint = BadgeGold,
-                                modifier = Modifier.size(20.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = "ඔබගේ ප්‍රධාන OIC කේතය (Station Code)",
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = BadgeGold
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Surface(
-                            shape = RoundedCornerShape(10.dp),
-                            color = Color.White.copy(alpha = 0.15f)
-                        ) {
-                            Text(
-                                text = oicCode,
-                                fontSize = 22.sp,
-                                fontWeight = FontWeight.ExtraBold,
-                                color = Color.White,
-                                letterSpacing = 2.sp,
-                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
-                            )
-                        }
-
-                        Row {
-                            // Copy button
-                            FilledTonalButton(
-                                onClick = {
-                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                    val clip = ClipData.newPlainText("OIC Station Code", oicCode)
-                                    clipboard.setPrimaryClip(clip)
-                                    Toast.makeText(context, "OIC කේතය ($oicCode) පිටපත් විය!", Toast.LENGTH_SHORT).show()
-                                },
-                                shape = RoundedCornerShape(10.dp),
-                                colors = ButtonDefaults.filledTonalButtonColors(
-                                    containerColor = BadgeGold,
-                                    contentColor = PoliceNavyDark
-                                ),
-                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                            ) {
-                                Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("පිටපත්", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                            }
-
-                            Spacer(modifier = Modifier.width(6.dp))
-
-                            // Share button
-                            IconButton(
-                                onClick = {
-                                    val sendIntent = Intent().apply {
-                                        action = Intent.ACTION_SEND
-                                        putExtra(
-                                            Intent.EXTRA_TEXT,
-                                            "ශ්‍රී ලංකා පොලීසිය - අපගේ ස්ථානාධිපති (OIC) Station Code අංකය: $oicCode\nකරුණාකර All In One Police ඇප් එකේ ලියාපදිංචි වීමේදී මෙම කේතය ඇතුළත් කරන්න."
-                                        )
-                                        type = "text/plain"
-                                    }
-                                    context.startActivity(Intent.createChooser(sendIntent, "OIC කේතය බෙදාගන්න"))
-                                }
-                            ) {
-                                Icon(Icons.Default.Share, contentDescription = "Share", tint = Color.White)
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(6.dp))
-
-                    Text(
-                        text = "මෙම අංකය ඔබ යටතේ සේවය කරන නිලධාරීන්ට ලබා දෙන්න. ඔවුන් ලියාපදිංචි වීමේදී මෙම අංකය ඇතුළත් කළ යුතුය.",
-                        fontSize = 11.sp,
-                        color = Color.White.copy(alpha = 0.8f),
-                        lineHeight = 14.sp
-                    )
-
-                    // Admin Branch Daily 6-Digit Passcode Banner (Only visible to OIC)
-                    val todayAdminPasscode = remember(oicCode, stationAdminSeed, subordinates) {
-                        viewModel.getTodayAdminPasscode(customStationCode = oicCode, customSeed = stationAdminSeed)
-                    }
-
-                    HorizontalDivider(
-                        color = Color.White.copy(alpha = 0.2f),
-                        modifier = Modifier.padding(vertical = 10.dp)
-                    )
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
+            // 1. Prominent OIC Unique Code Banner
+            item(key = "oic_header_card") {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = PoliceNavyDark),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
                         Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.Key,
-                                contentDescription = null,
-                                tint = BadgeGold,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Column {
-                                Text(
-                                    text = "අද දින පාලන අංශ රහස් අංකය (Admin PIN)",
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color.White
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.Key,
+                                    contentDescription = null,
+                                    tint = BadgeGold,
+                                    modifier = Modifier.size(18.dp)
                                 )
+                                Spacer(modifier = Modifier.width(6.dp))
                                 Text(
-                                    text = if (stationAdminSeed.isNotBlank()) {
-                                        "පාලන අංශ මුරපදය මත දිනපතා වෙනස් වේ (OIC ට පමණි)"
-                                    } else {
-                                        "දිනපතා ස්වයංක්‍රීයව වෙනස් වේ (OIC ට පමණි)"
-                                    },
-                                    fontSize = 10.sp,
-                                    color = Color(0xFFFCD34D)
+                                    text = "ඔබගේ ප්‍රධාන OIC කේතය (Station Code)",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = BadgeGold
                                 )
                             }
                         }
 
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
                             Surface(
-                                shape = RoundedCornerShape(8.dp),
-                                color = DutyActiveGreen.copy(alpha = 0.25f),
-                                border = BorderStroke(1.dp, DutyActiveGreen)
+                                shape = RoundedCornerShape(10.dp),
+                                color = Color.White.copy(alpha = 0.15f)
                             ) {
                                 Text(
-                                    text = todayAdminPasscode,
-                                    fontSize = 18.sp,
+                                    text = oicCode,
+                                    fontSize = 22.sp,
                                     fontWeight = FontWeight.ExtraBold,
                                     color = Color.White,
                                     letterSpacing = 2.sp,
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
                                 )
                             }
-                            Spacer(modifier = Modifier.width(6.dp))
-                            IconButton(
-                                onClick = {
-                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                    val clip = ClipData.newPlainText("Admin Daily Passcode", todayAdminPasscode)
-                                    clipboard.setPrimaryClip(clip)
-                                    Toast.makeText(context, "පාලන අංශ රහස් අංකය ($todayAdminPasscode) පිටපත් විය!", Toast.LENGTH_SHORT).show()
-                                },
-                                modifier = Modifier.size(32.dp)
-                            ) {
-                                Icon(Icons.Default.ContentCopy, contentDescription = "Copy Passcode", tint = BadgeGold, modifier = Modifier.size(16.dp))
-                            }
-                            IconButton(
-                                onClick = {
-                                    val sendIntent = Intent().apply {
-                                        action = Intent.ACTION_SEND
-                                        putExtra(
-                                            Intent.EXTRA_TEXT,
-                                            "ශ්‍රී ලංකා පොලීසිය - අද දින පාලන අංශ රහස් අංකය (Admin Branch Passcode): $todayAdminPasscode\nස්ථානාධිපති (OIC) මගින් නිකුත් කරන ලදී."
-                                        )
-                                        type = "text/plain"
+
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                FilledTonalButton(
+                                    onClick = {
+                                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                        val clip = ClipData.newPlainText("OIC Station Code", oicCode)
+                                        clipboard.setPrimaryClip(clip)
+                                        Toast.makeText(context, "OIC කේතය ($oicCode) පිටපත් විය!", Toast.LENGTH_SHORT).show()
+                                    },
+                                    shape = RoundedCornerShape(10.dp),
+                                    colors = ButtonDefaults.filledTonalButtonColors(
+                                        containerColor = BadgeGold,
+                                        contentColor = PoliceNavyDark
+                                    ),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                                ) {
+                                    Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("පිටපත්", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                }
+
+                                Spacer(modifier = Modifier.width(4.dp))
+
+                                IconButton(
+                                    onClick = {
+                                        val sendIntent = Intent().apply {
+                                            action = Intent.ACTION_SEND
+                                            putExtra(
+                                                Intent.EXTRA_TEXT,
+                                                "ශ්‍රී ලංකා පොලීසිය - අපගේ ස්ථානාධිපති (OIC) Station Code අංකය: $oicCode\nකරුණාකර All In One Police ඇප් එකේ ලියාපදිංචි වීමේදී මෙම කේතය ඇතුළත් කරන්න."
+                                            )
+                                            type = "text/plain"
+                                        }
+                                        context.startActivity(Intent.createChooser(sendIntent, "OIC කේතය බෙදාගන්න"))
                                     }
-                                    context.startActivity(Intent.createChooser(sendIntent, "පාලන අංශ රහස් අංකය බෙදාගන්න"))
-                                },
-                                modifier = Modifier.size(32.dp)
-                            ) {
-                                Icon(Icons.Default.Share, contentDescription = "Share Passcode", tint = Color.White, modifier = Modifier.size(16.dp))
+                                ) {
+                                    Icon(Icons.Default.Share, contentDescription = "Share", tint = Color.White)
+                                }
                             }
                         }
-                    }
 
-                    Spacer(modifier = Modifier.height(10.dp))
+                        Spacer(modifier = Modifier.height(6.dp))
 
-                    OutlinedButton(
-                        onClick = { isStationTransferDialogOpen = true },
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = BadgeGold),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, BadgeGold.copy(alpha = 0.6f)),
-                        shape = RoundedCornerShape(10.dp)
-                    ) {
-                        Icon(Icons.Default.SwapHoriz, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("ස්ථාන මාරුවීම් හා නිලධාරීන් පැවරීම (Station Handover)", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        Text(
+                            text = "මෙම අංකය ඔබ යටතේ සේවය කරන නිලධාරීන්ට ලබා දෙන්න. ඔවුන් ලියාපදිංචි වීමේදී මෙම අංකය ඇතුළත් කළ යුතුය.",
+                            fontSize = 11.sp,
+                            color = Color.White.copy(alpha = 0.8f),
+                            lineHeight = 14.sp
+                        )
+
+                        val todayAdminPasscode = remember(oicCode, stationAdminSeed, subordinates) {
+                            viewModel.getTodayAdminPasscode(customStationCode = oicCode, customSeed = stationAdminSeed)
+                        }
+
+                        HorizontalDivider(
+                            color = Color.White.copy(alpha = 0.2f),
+                            modifier = Modifier.padding(vertical = 8.dp)
+                        )
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Key,
+                                    contentDescription = null,
+                                    tint = BadgeGold,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Column {
+                                    Text(
+                                        text = "අද දින පාලන අංශ රහස් අංකය (Admin PIN)",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color.White
+                                    )
+                                    Text(
+                                        text = if (stationAdminSeed.isNotBlank()) {
+                                            "පාලන අංශ මුරපදය මත දිනපතා වෙනස් වේ (OIC ට පමණි)"
+                                        } else {
+                                            "දිනපතා ස්වයංක්‍රීයව වෙනස් වේ (OIC ට පමණි)"
+                                        },
+                                        fontSize = 10.sp,
+                                        color = Color(0xFFFCD34D)
+                                    )
+                                }
+                            }
+
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = DutyActiveGreen.copy(alpha = 0.25f),
+                                    border = BorderStroke(1.dp, DutyActiveGreen)
+                                ) {
+                                    Text(
+                                        text = todayAdminPasscode,
+                                        fontSize = 18.sp,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = Color.White,
+                                        letterSpacing = 2.sp,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(6.dp))
+                                IconButton(
+                                    onClick = {
+                                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                        val clip = ClipData.newPlainText("Admin Daily Passcode", todayAdminPasscode)
+                                        clipboard.setPrimaryClip(clip)
+                                        Toast.makeText(context, "පාලන අංශ රහස් අංකය ($todayAdminPasscode) පිටපත් විය!", Toast.LENGTH_SHORT).show()
+                                    },
+                                    modifier = Modifier.size(34.dp)
+                                ) {
+                                    Icon(Icons.Default.ContentCopy, contentDescription = "Copy Passcode", tint = BadgeGold, modifier = Modifier.size(16.dp))
+                                }
+                                IconButton(
+                                    onClick = {
+                                        val sendIntent = Intent().apply {
+                                            action = Intent.ACTION_SEND
+                                            putExtra(
+                                                Intent.EXTRA_TEXT,
+                                                "ශ්‍රී ලංකා පොලීසිය - අද දින පාලන අංශ රහස් අංකය (Admin Branch Passcode): $todayAdminPasscode\nස්ථානාධිපති (OIC) මගින් නිකුත් කරන ලදී."
+                                            )
+                                            type = "text/plain"
+                                        }
+                                        context.startActivity(Intent.createChooser(sendIntent, "පාලන අංශ රහස් අංකය බෙදාගන්න"))
+                                    },
+                                    modifier = Modifier.size(34.dp)
+                                ) {
+                                    Icon(Icons.Default.Share, contentDescription = "Share Passcode", tint = Color.White, modifier = Modifier.size(16.dp))
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        OutlinedButton(
+                            onClick = { isStationTransferDialogOpen = true },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = BadgeGold),
+                            border = BorderStroke(1.dp, BadgeGold.copy(alpha = 0.6f)),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Icon(Icons.Default.SwapHoriz, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("ස්ථාන මාරුවීම් හා නිලධාරීන් පැවරීම (Station Handover)", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
             }
 
-            // Quick Counter Metrics
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 14.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                MetricCard(
-                    title = "මුළු නිලධාරීන්",
-                    value = approvedList.size.toString(),
-                    color = PoliceThemeColors.navyText,
-                    modifier = Modifier.weight(1f)
-                )
-                MetricCard(
-                    title = "දැනට රාජකාරියේ",
-                    value = onDutyList.size.toString(),
-                    color = PoliceThemeColors.greenText,
-                    modifier = Modifier.weight(1f)
-                )
-                MetricCard(
-                    title = "අනුමැති ඉල්ලීම්",
-                    value = pendingList.size.toString(),
-                    color = if (pendingList.isNotEmpty()) PoliceThemeColors.orangeText else PoliceThemeColors.mutedText,
-                    modifier = Modifier.weight(1f)
-                )
+            // 2. Quick Counter Metrics
+            item(key = "oic_metrics_row") {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    MetricCard(
+                        title = "මුළු නිලධාරීන්",
+                        value = approvedList.size.toString(),
+                        color = PoliceThemeColors.navyText,
+                        modifier = Modifier.weight(1f)
+                    )
+                    MetricCard(
+                        title = "දැනට රාජකාරියේ",
+                        value = onDutyList.size.toString(),
+                        color = PoliceThemeColors.greenText,
+                        modifier = Modifier.weight(1f)
+                    )
+                    MetricCard(
+                        title = "අනුමැති ඉල්ලීම්",
+                        value = pendingList.size.toString(),
+                        color = if (pendingList.isNotEmpty()) PoliceThemeColors.orangeText else PoliceThemeColors.mutedText,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
             }
 
-            // Google Sheet Directory Quick Access Button for OIC
-            Button(
-                onClick = { isDirectoryOpen = true },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 14.dp)
-                    .testTag("oic_directory_banner_btn"),
-                shape = RoundedCornerShape(12.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = PoliceNavyPrimary,
-                    contentColor = Color.White
-                )
-            ) {
-                Icon(Icons.Default.ContactPhone, contentDescription = null, modifier = Modifier.size(18.dp), tint = Color(0xFFFCD34D))
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("පොලිස් දුරකථන නාමාවලිය (Google Sheet Directory)", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            // 3. Google Sheet Directory Quick Access Button for OIC
+            item(key = "oic_directory_btn") {
+                Button(
+                    onClick = { isDirectoryOpen = true },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp)
+                        .testTag("oic_directory_banner_btn"),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = PoliceNavyPrimary,
+                        contentColor = Color.White
+                    )
+                ) {
+                    Icon(Icons.Default.ContactPhone, contentDescription = null, modifier = Modifier.size(18.dp), tint = Color(0xFFFCD34D))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("පොලිස් දුරකථන නාමාවලිය (Google Sheet Directory)", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
             }
 
+            // 4. Emergency SOS Banner
             if (emergencyAlerts.isNotEmpty()) {
-                EmergencySosBanner(
-                    alerts = emergencyAlerts,
-                    myLocation = myLocation,
-                    myUid = appUser?.uid ?: "",
-                    isOic = true,
-                    onClickAlertLocation = { alert ->
-                        selectedTab = 3
-                        viewModel.navigateToLocationOnMap(
-                            target = MapNavigationTarget(
-                                alertId = alert.id,
-                                title = "🚨 හදිසි SOS: ${alert.senderName}",
-                                subtitle = alert.message,
-                                lat = alert.lat,
-                                lng = alert.lng,
-                                phone = alert.senderPhone
-                            ),
-                            openDialog = false
-                        )
-                    },
-                    onResolveAlert = { viewModel.resolveEmergencyAlert(it) },
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
-                )
+                item(key = "oic_sos_banner") {
+                    EmergencySosBanner(
+                        alerts = emergencyAlerts,
+                        myLocation = myLocation,
+                        myUid = appUser?.uid ?: "",
+                        isOic = true,
+                        onClickAlertLocation = { alert ->
+                            selectedTab = 3
+                            viewModel.navigateToLocationOnMap(
+                                target = MapNavigationTarget(
+                                    alertId = alert.id,
+                                    title = "🚨 හදිසි SOS: ${alert.senderName}",
+                                    subtitle = alert.message,
+                                    lat = alert.lat,
+                                    lng = alert.lng,
+                                    phone = alert.senderPhone
+                                ),
+                                openDialog = false
+                            )
+                        },
+                        onResolveAlert = { viewModel.resolveEmergencyAlert(it) },
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
+                    )
+                }
             }
 
-            Spacer(modifier = Modifier.height(6.dp))
-
-            // Tab Navigation (4 Tabs: Officers, Today/Past Duty Roster, Requests, Map)
-            ScrollableTabRow(
-                selectedTabIndex = selectedTab,
-                containerColor = MaterialTheme.colorScheme.surface,
-                contentColor = PoliceThemeColors.navyText,
-                edgePadding = 12.dp
-            ) {
-                Tab(
-                    selected = selectedTab == 0,
-                    onClick = { selectedTab = 0 },
-                    text = { Text("නිලධාරීන් (${approvedList.size})", fontSize = 12.sp, fontWeight = FontWeight.Bold) }
-                )
-                Tab(
-                    selected = selectedTab == 1,
-                    onClick = { selectedTab = 1 },
-                    text = {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.CalendarMonth, contentDescription = null, modifier = Modifier.size(15.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("රාජකාරි දින", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                        }
-                    }
-                )
-                Tab(
-                    selected = selectedTab == 2,
-                    onClick = { selectedTab = 2 },
-                    text = {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("ඉල්ලීම්", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                            if (pendingList.isNotEmpty()) {
+            // 5. Tab Navigation (5 Tabs: Officers, Duty Roster, Requests, Map, Station Contacts)
+            item(key = "oic_tabs_row") {
+                ScrollableTabRow(
+                    selectedTabIndex = selectedTab,
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    contentColor = PoliceThemeColors.navyText,
+                    edgePadding = 12.dp
+                ) {
+                    Tab(
+                        selected = selectedTab == 0,
+                        onClick = { selectedTab = 0 },
+                        text = { Text("නිලධාරීන් (${approvedList.size})", fontSize = 12.sp, fontWeight = FontWeight.Bold) }
+                    )
+                    Tab(
+                        selected = selectedTab == 1,
+                        onClick = { selectedTab = 1 },
+                        text = {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.CalendarMonth, contentDescription = null, modifier = Modifier.size(15.dp))
                                 Spacer(modifier = Modifier.width(4.dp))
-                                Badge(containerColor = DutyOffOrange) {
-                                    Text(pendingList.size.toString(), color = Color.White)
+                                Text("රාජකාරි දින", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    )
+                    Tab(
+                        selected = selectedTab == 2,
+                        onClick = { selectedTab = 2 },
+                        text = {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("ඉල්ලීම්", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                if (pendingList.isNotEmpty()) {
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Badge(containerColor = DutyOffOrange) {
+                                        Text(pendingList.size.toString(), color = Color.White)
+                                    }
                                 }
                             }
                         }
-                    }
-                )
-                Tab(
-                    selected = selectedTab == 3,
-                    onClick = { selectedTab = 3 },
-                    text = {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.Map, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("සිතියම", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    )
+                    Tab(
+                        selected = selectedTab == 3,
+                        onClick = { selectedTab = 3 },
+                        text = {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.Map, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("සිතියම", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
                         }
-                    }
-                )
-                Tab(
-                    selected = selectedTab == 4,
-                    onClick = { selectedTab = 4 },
-                    modifier = Modifier.testTag("oic_station_contacts_tab"),
-                    text = {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.Contacts, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("සබඳතා (${stationContacts.size})", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    )
+                    Tab(
+                        selected = selectedTab == 4,
+                        onClick = { selectedTab = 4 },
+                        modifier = Modifier.testTag("oic_station_contacts_tab"),
+                        text = {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.Contacts, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("සබඳතා (${stationContacts.size})", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
                         }
-                    }
-                )
+                    )
+                }
             }
 
+            // 6. Active Tab Content directly inside the single scrollable LazyColumn
             when (selectedTab) {
                 0 -> {
-                    // Approved Subordinates List
                     if (approvedList.isEmpty()) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(32.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = "තවමත් සම්බන්ධ වූ නිලධාරීන් නොමැත.\nඔබගේ OIC කේතය ($oicCode) නිලධාරීන්ට ලබා දෙන්න.",
-                                textAlign = TextAlign.Center,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                        item(key = "approved_empty") {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 24.dp, vertical = 32.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "තවමත් සම්බන්ධ වූ නිලධාරීන් නොමැත.\nඔබගේ OIC කේතය ($oicCode) නිලධාරීන්ට ලබා දෙන්න.",
+                                    textAlign = TextAlign.Center,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
                     } else {
-                        LazyColumn(
-                            modifier = Modifier.fillMaxSize(),
-                            contentPadding = PaddingValues(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            items(approvedList) { officer ->
+                        items(approvedList, key = { "approved_${it.uid}" }) { officer ->
+                            Box(modifier = Modifier.padding(horizontal = 12.dp)) {
                                 SubordinateOfficerCard(
                                     officer = officer,
                                     onCall = { dialPhone(it) },
@@ -666,10 +743,22 @@ fun OICDashboardScreen(
                 }
 
                 1 -> {
-                    // Today vs Past Dates Duty Roster Tab
-                    DutyRosterByDateTab(
-                        approvedOfficers = approvedList,
-                        stationDutyRecords = stationDutyRecords,
+                    dutyRosterByDateItems(
+                        todayKey = todayKey,
+                        showPastMode = showPastDutyMode,
+                        selectedPastDate = selectedPastDate,
+                        targetDateKey = targetDateKey,
+                        availablePastDates = availablePastDates,
+                        rosterEntries = rosterEntries,
+                        onShowToday = { showPastDutyMode = false },
+                        onShowPast = {
+                            showPastDutyMode = true
+                            if (selectedPastDate == todayKey && availablePastDates.isNotEmpty()) {
+                                selectedPastDate = availablePastDates.first()
+                            }
+                        },
+                        onSelectPastDate = { selectedPastDate = it },
+                        onOpenDatePicker = { dutyDatePicker.show() },
                         onCall = { dialPhone(it) },
                         onSelectOfficer = { officer ->
                             viewModel.selectOfficer(officer)
@@ -679,27 +768,24 @@ fun OICDashboardScreen(
                 }
 
                 2 -> {
-                    // Pending Requests List
                     if (pendingList.isEmpty()) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(32.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = "අනුමැතිය සඳහා නව ඉල්ලීම් නොමැත.",
-                                textAlign = TextAlign.Center,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                        item(key = "pending_empty") {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 24.dp, vertical = 32.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "අනුමැතිය සඳහා නව ඉල්ලීම් නොමැත.",
+                                    textAlign = TextAlign.Center,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
                     } else {
-                        LazyColumn(
-                            modifier = Modifier.fillMaxSize(),
-                            contentPadding = PaddingValues(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            items(pendingList) { officer ->
+                        items(pendingList, key = { "pending_${it.uid}" }) { officer ->
+                            Box(modifier = Modifier.padding(horizontal = 12.dp)) {
                                 PendingRequestCard(
                                     officer = officer,
                                     onApprove = { viewModel.approveOfficer(officer.uid) },
@@ -711,36 +797,72 @@ fun OICDashboardScreen(
                 }
 
                 3 -> {
-                    // Full Live Clear OSM Map for OIC (All Officers, Individual Filter, Off-Duty Last Spot, Trails & Stay Points, SOS Route)
-                    PoliceLiveMapView(
-                        officers = approvedList,
-                        locationHistory = stationLocationHistory,
-                        emergencyAlerts = emergencyAlerts,
-                        myLocation = myLocation,
-                        activeRouteState = activeRouteState,
-                        selectedDateKey = selectedMapDate,
-                        isOicView = true,
-                        onSelectDate = { viewModel.selectMapDate(it) },
-                        onNavigateToTarget = { target ->
-                            viewModel.navigateToLocationOnMap(target, openDialog = false)
-                        },
-                        onClearRoute = { viewModel.clearMapRoute() },
-                        onResolveEmergency = { viewModel.resolveEmergencyAlert(it) },
-                        onRefreshGps = { viewModel.refreshCurrentLocation(showFeedback = true) },
-                        onOpenEmergencySender = { isSendSosDialogOpen = true },
-                        onExpandFullscreen = { viewModel.openRouteMapDialog() },
-                        modifier = Modifier.fillMaxSize()
-                    )
+                    item(key = "oic_live_map") {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(520.dp)
+                                .padding(horizontal = 12.dp, vertical = 4.dp)
+                        ) {
+                            PoliceLiveMapView(
+                                officers = approvedList,
+                                locationHistory = stationLocationHistory,
+                                emergencyAlerts = emergencyAlerts,
+                                myLocation = myLocation,
+                                myLocationAccuracyMeters = myLocationAccuracy,
+                                activeRouteState = activeRouteState,
+                                selectedDateKey = selectedMapDate,
+                                isOicView = true,
+                                onSelectDate = { viewModel.selectMapDate(it) },
+                                onNavigateToTarget = { target ->
+                                    viewModel.navigateToLocationOnMap(target, openDialog = false)
+                                },
+                                onClearRoute = { viewModel.clearMapRoute() },
+                                onResolveEmergency = { viewModel.resolveEmergencyAlert(it) },
+                                onRefreshGps = { viewModel.refreshCurrentLocation(showFeedback = true) },
+                                onOpenEmergencySender = { isSendSosDialogOpen = true },
+                                onExpandFullscreen = { viewModel.openRouteMapDialog() },
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        }
+                    }
                 }
 
                 4 -> {
-                    StationContactsSection(
-                        viewModel = viewModel,
-                        modifier = Modifier.fillMaxSize()
+                    stationContactsItems(
+                        appUser = appUser,
+                        stationContacts = stationContacts,
+                        filteredContacts = filteredContacts,
+                        searchQuery = contactSearchQuery,
+                        onSearchQueryChange = { contactSearchQuery = it },
+                        roleFilter = contactRoleFilter,
+                        onRoleFilterChange = { contactRoleFilter = it },
+                        onCall = { dialStationContactPhone(context, it) },
+                        onWhatsApp = { openStationContactWhatsApp(context, it) },
+                        onCopy = { phone, ownerName -> copyStationContactPhone(context, phone, ownerName) },
+                        onEditOwn = { isEditOwnContactOpen = true },
+                        itemModifier = Modifier.padding(horizontal = 12.dp)
                     )
                 }
             }
         }
+    }
+
+    if (isEditOwnContactOpen && appUser != null) {
+        EditOwnStationContactDialog(
+            initialPhone = appUser?.phoneNumber.orEmpty(),
+            initialBadge = appUser?.badgeNumber.orEmpty(),
+            initialRank = appUser?.rank.orEmpty(),
+            onDismiss = { isEditOwnContactOpen = false },
+            onSave = { phone, badge, rank ->
+                viewModel.updateOwnContactInfo(
+                    phoneNumber = phone,
+                    badgeNumber = badge,
+                    rank = rank,
+                    onSuccess = { isEditOwnContactOpen = false }
+                )
+            }
+        )
     }
 
     if (isDetailDialogOpen) {
@@ -982,138 +1104,87 @@ private fun SubordinateOfficerCard(
     }
 }
 
-@Composable
-private fun DutyRosterByDateTab(
-    approvedOfficers: List<AppUser>,
-    stationDutyRecords: List<DutyRecord>,
+private fun LazyListScope.dutyRosterByDateItems(
+    todayKey: String,
+    showPastMode: Boolean,
+    selectedPastDate: String,
+    targetDateKey: String,
+    availablePastDates: List<String>,
+    rosterEntries: List<Pair<AppUser, List<DutyRecord>>>,
+    onShowToday: () -> Unit,
+    onShowPast: () -> Unit,
+    onSelectPastDate: (String) -> Unit,
+    onOpenDatePicker: () -> Unit,
     onCall: (String) -> Unit,
     onSelectOfficer: (AppUser) -> Unit
 ) {
-    val context = LocalContext.current
-    val todayKey = DateTimeUtils.getTodayKey()
-    var showPastMode by remember { mutableStateOf(false) }
-
-    val availablePastDates = remember(stationDutyRecords, todayKey) {
-        stationDutyRecords
-            .map { DateTimeUtils.formatDate(it.timestamp) }
-            .filter { it.isNotBlank() && it < todayKey }
-            .distinct()
-            .sortedDescending()
-    }
-
-    var selectedPastDate by remember(availablePastDates) {
-        mutableStateOf(availablePastDates.firstOrNull() ?: todayKey)
-    }
-
-    val calendar = remember { Calendar.getInstance() }
-    val datePicker = remember {
-        DatePickerDialog(
-            context,
-            { _, year, month, dayOfMonth ->
-                val formatted = "%04d-%02d-%02d".format(year, month + 1, dayOfMonth)
-                selectedPastDate = formatted
-                showPastMode = true
-            },
-            calendar.get(Calendar.YEAR),
-            calendar.get(Calendar.MONTH),
-            calendar.get(Calendar.DAY_OF_MONTH)
-        )
-    }
-
-    val targetDateKey = if (!showPastMode) todayKey else selectedPastDate
-    val recordsOnTargetDate = remember(stationDutyRecords, targetDateKey) {
-        stationDutyRecords.filter { DateTimeUtils.formatDate(it.timestamp) == targetDateKey }
-    }
-
-    val rosterEntries = remember(approvedOfficers, recordsOnTargetDate, showPastMode) {
-        val groupedByOfficer = recordsOnTargetDate.groupBy { it.officerId }
-        val officerMap = approvedOfficers.associateBy { it.uid }
-        val entries = mutableListOf<Pair<AppUser, List<DutyRecord>>>()
-
-        groupedByOfficer.forEach { (uid, recs) ->
-            val user = officerMap[uid]
-            if (user != null) {
-                entries.add(user to recs.sortedByDescending { it.timestamp })
-            }
-        }
-        // For Today: also include officers currently marked ON DUTY even if their shift started earlier
-        if (!showPastMode) {
-            approvedOfficers.filter { it.isOnDuty && groupedByOfficer[it.uid] == null }.forEach { onDutyOfficer ->
-                entries.add(onDutyOfficer to emptyList())
-            }
-        }
-        entries
-    }
-
-    Column(modifier = Modifier.fillMaxSize().padding(12.dp)) {
-        // Toggle Today vs Past Dates
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            FilterChip(
-                selected = !showPastMode,
-                onClick = { showPastMode = false },
-                leadingIcon = { Icon(Icons.Default.Today, contentDescription = null, modifier = Modifier.size(16.dp)) },
-                label = { Text("අද දින ($todayKey)", fontSize = 12.sp, fontWeight = FontWeight.Bold) },
-                modifier = Modifier.weight(1f)
-            )
-            FilterChip(
-                selected = showPastMode,
-                onClick = {
-                    showPastMode = true
-                    if (selectedPastDate == todayKey && availablePastDates.isNotEmpty()) {
-                        selectedPastDate = availablePastDates.first()
-                    }
-                },
-                leadingIcon = { Icon(Icons.Default.History, contentDescription = null, modifier = Modifier.size(16.dp)) },
-                label = { Text("පසුගිය දින (${availablePastDates.size})", fontSize = 12.sp, fontWeight = FontWeight.Bold) },
-                modifier = Modifier.weight(1f)
-            )
-        }
-
-        if (showPastMode) {
-            Spacer(modifier = Modifier.height(6.dp))
+    item(key = "duty_roster_controls") {
+        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                LazyRow(
-                    modifier = Modifier.weight(1f),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                FilterChip(
+                    selected = !showPastMode,
+                    onClick = onShowToday,
+                    leadingIcon = { Icon(Icons.Default.Today, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                    label = { Text("අද දින ($todayKey)", fontSize = 12.sp, fontWeight = FontWeight.Bold) },
+                    modifier = Modifier.weight(1f)
+                )
+                FilterChip(
+                    selected = showPastMode,
+                    onClick = onShowPast,
+                    leadingIcon = { Icon(Icons.Default.History, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                    label = { Text("පසුගිය දින (${availablePastDates.size})", fontSize = 12.sp, fontWeight = FontWeight.Bold) },
+                    modifier = Modifier.weight(1f)
+                )
+            }
+
+            if (showPastMode) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    items(availablePastDates) { dateStr ->
-                        FilterChip(
-                            selected = selectedPastDate == dateStr,
-                            onClick = { selectedPastDate = dateStr },
-                            label = { Text(dateStr, fontSize = 11.sp) }
-                        )
+                    LazyRow(
+                        modifier = Modifier.weight(1f),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        items(availablePastDates) { dateStr ->
+                            FilterChip(
+                                selected = selectedPastDate == dateStr,
+                                onClick = { onSelectPastDate(dateStr) },
+                                label = { Text(dateStr, fontSize = 11.sp) }
+                            )
+                        }
+                    }
+                    IconButton(onClick = onOpenDatePicker) {
+                        Icon(Icons.Default.CalendarMonth, contentDescription = "Pick Date", tint = PoliceThemeColors.navyText)
                     }
                 }
-                IconButton(onClick = { datePicker.show() }) {
-                    Icon(Icons.Default.CalendarMonth, contentDescription = "Pick Date", tint = PoliceThemeColors.navyText)
-                }
             }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text(
+                text = if (!showPastMode) {
+                    "අද දින රාජකාරි කළ / නියුතු නිලධාරීන් (${rosterEntries.size})"
+                } else {
+                    "$targetDateKey දින රාජකාරි කළ නිලධාරීන් (${rosterEntries.size})"
+                },
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+                color = PoliceThemeColors.navyText
+            )
         }
+    }
 
-        Spacer(modifier = Modifier.height(8.dp))
-
-        Text(
-            text = if (!showPastMode) {
-                "අද දින රාජකාරි කළ / නියුතු නිලධාරීන් (${rosterEntries.size})"
-            } else {
-                "$targetDateKey දින රාජකාරි කළ නිලධාරීන් (${rosterEntries.size})"
-            },
-            fontSize = 13.sp,
-            fontWeight = FontWeight.Bold,
-            color = PoliceThemeColors.navyText
-        )
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        if (rosterEntries.isEmpty()) {
+    if (rosterEntries.isEmpty()) {
+        item(key = "duty_roster_empty") {
             Box(
-                modifier = Modifier.fillMaxSize().padding(24.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp, vertical = 28.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
@@ -1123,75 +1194,71 @@ private fun DutyRosterByDateTab(
                     fontSize = 13.sp
                 )
             }
-        } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+        }
+    } else {
+        items(rosterEntries, key = { (officer, _) -> "roster_${targetDateKey}_${officer.uid}" }) { (officer, dayRecords) ->
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp)
+                    .clickable { onSelectOfficer(officer) },
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                border = BorderStroke(1.dp, if (officer.isOnDuty && !showPastMode) DutyActiveGreen.copy(alpha = 0.5f) else Color.Transparent)
             ) {
-                items(rosterEntries) { (officer, dayRecords) ->
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { onSelectOfficer(officer) },
-                        shape = RoundedCornerShape(14.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-                        border = BorderStroke(1.dp, if (officer.isOnDuty && !showPastMode) DutyActiveGreen.copy(alpha = 0.5f) else Color.Transparent)
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column(modifier = Modifier.padding(12.dp)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(officer.displayName, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                            Text(
+                                text = "${officer.rank.ifBlank { "Officer" }} • ${officer.badgeNumber.ifBlank { "N/A" }}",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        if (officer.phoneNumber.isNotBlank()) {
+                            IconButton(
+                                onClick = { onCall(officer.phoneNumber) },
+                                modifier = Modifier
+                                    .size(38.dp)
+                                    .background(DutyActiveGreen.copy(alpha = 0.14f), CircleShape)
                             ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(officer.displayName, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-                                    Text(
-                                        text = "${officer.rank.ifBlank { "Officer" }} • ${officer.badgeNumber.ifBlank { "N/A" }}",
-                                        fontSize = 12.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                                if (officer.phoneNumber.isNotBlank()) {
-                                    IconButton(
-                                        onClick = { onCall(officer.phoneNumber) },
-                                        modifier = Modifier
-                                            .size(38.dp)
-                                            .background(DutyActiveGreen.copy(alpha = 0.14f), CircleShape)
-                                    ) {
-                                        Icon(Icons.Default.Call, contentDescription = "Call Officer", tint = PoliceThemeColors.greenText, modifier = Modifier.size(18.dp))
-                                    }
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                }
-                                if (!showPastMode) {
-                                    Surface(
-                                        shape = RoundedCornerShape(8.dp),
-                                        color = if (officer.isOnDuty) DutyActiveGreen else Color(0xFF475569)
-                                    ) {
-                                        Text(
-                                            text = if (officer.isOnDuty) "ON DUTY" else "COMPLETED",
-                                            color = Color.White,
-                                            fontSize = 10.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                                        )
-                                    }
-                                }
+                                Icon(Icons.Default.Call, contentDescription = "Call Officer", tint = PoliceThemeColors.greenText, modifier = Modifier.size(18.dp))
                             }
-                            if (dayRecords.isNotEmpty()) {
-                                Spacer(modifier = Modifier.height(6.dp))
-                                dayRecords.take(3).forEach { rec ->
-                                    val lbl = when (rec.type) {
-                                        "ON_DUTY" -> "පැමිණීම"
-                                        "EXTRA_DUTY" -> "විශේෂ/අමතර"
-                                        else -> "බැහැරවීම"
-                                    }
-                                    Text(
-                                        text = "• ${DateTimeUtils.formatTime(rec.timestamp)} ($lbl): ${rec.dutyNature.ifBlank { "-" }}",
-                                        fontSize = 11.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
+                            Spacer(modifier = Modifier.width(6.dp))
+                        }
+                        if (!showPastMode) {
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (officer.isOnDuty) DutyActiveGreen else Color(0xFF475569)
+                            ) {
+                                Text(
+                                    text = if (officer.isOnDuty) "ON DUTY" else "COMPLETED",
+                                    color = Color.White,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                )
                             }
+                        }
+                    }
+                    if (dayRecords.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        dayRecords.take(3).forEach { rec ->
+                            val lbl = when (rec.type) {
+                                "ON_DUTY" -> "පැමිණීම"
+                                "EXTRA_DUTY" -> "විශේෂ/අමතර"
+                                else -> "බැහැරවීම"
+                            }
+                            Text(
+                                text = "• ${DateTimeUtils.formatTime(rec.timestamp)} ($lbl): ${rec.dutyNature.ifBlank { "-" }}",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
                     }
                 }

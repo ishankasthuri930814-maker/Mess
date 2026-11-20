@@ -11,6 +11,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -40,10 +41,63 @@ import com.example.ui.theme.PoliceNavyDark
 import com.example.ui.theme.PoliceNavyPrimary
 import com.example.ui.theme.PoliceThemeColors
 
-private enum class StationContactRoleFilter(val label: String) {
+internal enum class StationContactRoleFilter(val label: String) {
     ALL("සියල්ල"),
     LEADERSHIP("OIC / පාලන"),
     OFFICERS("නිලධාරීන්")
+}
+
+internal fun dialStationContactPhone(context: Context, phone: String) {
+    val clean = phone.replace(" ", "").replace("-", "")
+    if (clean.isBlank()) return
+    try {
+        context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$clean")))
+    } catch (_: Exception) {
+        Toast.makeText(context, "ඇමතුම් ලබාගත නොහැක", Toast.LENGTH_SHORT).show()
+    }
+}
+
+internal fun openStationContactWhatsApp(context: Context, phone: String) {
+    val digits = phone.filter { it.isDigit() }
+    if (digits.isBlank()) return
+    val waNumber = when {
+        digits.startsWith("94") -> digits
+        digits.startsWith("0") && digits.length >= 10 -> "94${digits.drop(1)}"
+        else -> digits
+    }
+    try {
+        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://wa.me/$waNumber")))
+    } catch (_: Exception) {
+        Toast.makeText(context, "WhatsApp විවෘත කළ නොහැක", Toast.LENGTH_SHORT).show()
+    }
+}
+
+internal fun copyStationContactPhone(context: Context, phone: String, ownerName: String) {
+    if (phone.isBlank()) return
+    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+    clipboard.setPrimaryClip(ClipData.newPlainText("Station Contact Phone", phone))
+    Toast.makeText(context, "$ownerName ගේ අංකය ($phone) පිටපත් විය", Toast.LENGTH_SHORT).show()
+}
+
+internal fun filterStationContacts(
+    stationContacts: List<AppUser>,
+    searchQuery: String,
+    roleFilter: StationContactRoleFilter
+): List<AppUser> {
+    val q = searchQuery.trim().lowercase()
+    return stationContacts.filter { contact ->
+        val roleMatch = when (roleFilter) {
+            StationContactRoleFilter.ALL -> true
+            StationContactRoleFilter.LEADERSHIP -> contact.role == "OIC" || contact.role == "ADMIN_BRANCH"
+            StationContactRoleFilter.OFFICERS -> contact.role == "OFFICER"
+        }
+        val queryMatch = q.isBlank() ||
+            contact.displayName.lowercase().contains(q) ||
+            contact.rank.lowercase().contains(q) ||
+            contact.badgeNumber.lowercase().contains(q) ||
+            contact.phoneNumber.lowercase().contains(q)
+        roleMatch && queryMatch
+    }
 }
 
 @Composable
@@ -59,56 +113,8 @@ fun StationContactsSection(
     var roleFilter by remember { mutableStateOf(StationContactRoleFilter.ALL) }
     var isEditOwnContactOpen by remember { mutableStateOf(false) }
 
-    val stationCode = appUser?.oicStationCode?.trim()?.uppercase().orEmpty()
-    val stationName = appUser?.stationName?.takeIf { it.isNotBlank() } ?: stationCode.ifBlank { "පොලිස් ස්ථානය" }
-
     val filteredContacts = remember(stationContacts, searchQuery, roleFilter) {
-        val q = searchQuery.trim().lowercase()
-        stationContacts.filter { contact ->
-            val roleMatch = when (roleFilter) {
-                StationContactRoleFilter.ALL -> true
-                StationContactRoleFilter.LEADERSHIP -> contact.role == "OIC" || contact.role == "ADMIN_BRANCH"
-                StationContactRoleFilter.OFFICERS -> contact.role == "OFFICER"
-            }
-            val queryMatch = q.isBlank() ||
-                contact.displayName.lowercase().contains(q) ||
-                contact.rank.lowercase().contains(q) ||
-                contact.badgeNumber.lowercase().contains(q) ||
-                contact.phoneNumber.lowercase().contains(q)
-            roleMatch && queryMatch
-        }
-    }
-
-    fun dialPhone(phone: String) {
-        val clean = phone.replace(" ", "").replace("-", "")
-        if (clean.isBlank()) return
-        try {
-            context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$clean")))
-        } catch (_: Exception) {
-            Toast.makeText(context, "ඇමතුම් ලබාගත නොහැක", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    fun openWhatsApp(phone: String) {
-        val digits = phone.filter { it.isDigit() }
-        if (digits.isBlank()) return
-        val waNumber = when {
-            digits.startsWith("94") -> digits
-            digits.startsWith("0") && digits.length >= 10 -> "94${digits.drop(1)}"
-            else -> digits
-        }
-        try {
-            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://wa.me/$waNumber")))
-        } catch (_: Exception) {
-            Toast.makeText(context, "WhatsApp විවෘත කළ නොහැක", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    fun copyPhone(phone: String, ownerName: String) {
-        if (phone.isBlank()) return
-        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        clipboard.setPrimaryClip(ClipData.newPlainText("Station Contact Phone", phone))
-        Toast.makeText(context, "$ownerName ගේ අංකය ($phone) පිටපත් විය", Toast.LENGTH_SHORT).show()
+        filterStationContacts(stationContacts, searchQuery, roleFilter)
     }
 
     Column(
@@ -121,235 +127,19 @@ fun StationContactsSection(
             contentPadding = PaddingValues(14.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            // 1. Station Scoped Banner Card
-            item {
-                Card(
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = PoliceNavyDark),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(40.dp)
-                                        .clip(CircleShape)
-                                        .background(BadgeGold),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Contacts,
-                                        contentDescription = null,
-                                        tint = PoliceNavyDark,
-                                        modifier = Modifier.size(22.dp)
-                                    )
-                                }
-                                Spacer(modifier = Modifier.width(10.dp))
-                                Column {
-                                    Text(
-                                        text = "ස්ථානීය නිලධාරී සබඳතා ලැයිස්තුව",
-                                        fontSize = 15.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = Color.White
-                                    )
-                                    Text(
-                                        text = "$stationName • $stationCode",
-                                        fontSize = 11.sp,
-                                        color = BadgeGold,
-                                        fontWeight = FontWeight.SemiBold,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                            }
-
-                            Surface(
-                                shape = RoundedCornerShape(10.dp),
-                                color = Color.White.copy(alpha = 0.16f)
-                            ) {
-                                Text(
-                                    text = "${stationContacts.size} දෙනෙක්",
-                                    color = Color.White,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
-                                )
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        Text(
-                            text = "ඔබගේ පොලිස් ස්ථානයට ($stationCode) අනුමත OIC, පාලන අංශය සහ නිලධාරීන්ට පමණක් දිස්වන පෞද්ගලික සබඳතා ලැයිස්තුව.",
-                            fontSize = 11.sp,
-                            color = Color.White.copy(alpha = 0.85f),
-                            lineHeight = 15.sp
-                        )
-                    }
-                }
-            }
-
-            // 2. Prompt if current user has no phone number saved yet (legacy accounts)
-            val currentUserHasValidPhone = (appUser?.phoneNumber?.filter { it.isDigit() }?.length ?: 0) >= 9
-            if (!currentUserHasValidPhone && appUser != null) {
-                item {
-                    Card(
-                        shape = RoundedCornerShape(14.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Warning,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.error
-                            )
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "ඔබගේ දුරකථන අංකය සටහන් කර නැත",
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onErrorContainer
-                                )
-                                Text(
-                                    text = "ස්ථානයේ අනෙකුත් නිලධාරීන්ට ඔබව සම්බන්ධ කර ගැනීමට දුරකථන අංකය එක් කරන්න.",
-                                    fontSize = 11.sp,
-                                    color = MaterialTheme.colorScheme.onErrorContainer
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Button(
-                                onClick = { isEditOwnContactOpen = true },
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = MaterialTheme.colorScheme.error,
-                                    contentColor = Color.White
-                                ),
-                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                                shape = RoundedCornerShape(10.dp),
-                                modifier = Modifier.testTag("add_missing_phone_btn")
-                            ) {
-                                Text("එක් කරන්න", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                            }
-                        }
-                    }
-                }
-            }
-
-            // 3. Search Bar & Filter Chips
-            item {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        value = searchQuery,
-                        onValueChange = { searchQuery = it },
-                        placeholder = {
-                            Text(
-                                "නම, නිලය, නිල අංකය හෝ දුරකථන අංකය සොයන්න...",
-                                fontSize = 13.sp
-                            )
-                        },
-                        leadingIcon = {
-                            Icon(Icons.Default.Search, contentDescription = "Search Station Contacts")
-                        },
-                        trailingIcon = {
-                            if (searchQuery.isNotEmpty()) {
-                                IconButton(onClick = { searchQuery = "" }) {
-                                    Icon(Icons.Default.Clear, contentDescription = "Clear Search")
-                                }
-                            }
-                        },
-                        singleLine = true,
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("station_contacts_search_input")
-                    )
-
-                    LazyRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        items(StationContactRoleFilter.entries) { filter ->
-                            val count = when (filter) {
-                                StationContactRoleFilter.ALL -> stationContacts.size
-                                StationContactRoleFilter.LEADERSHIP -> stationContacts.count { it.role == "OIC" || it.role == "ADMIN_BRANCH" }
-                                StationContactRoleFilter.OFFICERS -> stationContacts.count { it.role == "OFFICER" }
-                            }
-                            FilterChip(
-                                selected = roleFilter == filter,
-                                onClick = { roleFilter = filter },
-                                label = {
-                                    Text(
-                                        text = "${filter.label} ($count)",
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                }
-                            )
-                        }
-                    }
-                }
-            }
-
-            // 4. Empty State or Station Contact Cards
-            if (filteredContacts.isEmpty()) {
-                item {
-                    Card(
-                        shape = RoundedCornerShape(16.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(32.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.ContactPhone,
-                                contentDescription = null,
-                                tint = PoliceThemeColors.mutedText,
-                                modifier = Modifier.size(48.dp)
-                            )
-                            Spacer(modifier = Modifier.height(10.dp))
-                            Text(
-                                text = if (stationContacts.isEmpty()) {
-                                    "මෙම පොලිස් ස්ථානයට අනුමත නිලධාරී සබඳතා තවම නොමැත."
-                                } else {
-                                    "සෙවුමට ගැළපෙන නිලධාරියෙකු හමු නොවීය."
-                                },
-                                fontSize = 13.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                }
-            } else {
-                items(filteredContacts, key = { it.uid }) { contact ->
-                    StationContactCard(
-                        contact = contact,
-                        isMe = contact.uid == appUser?.uid,
-                        onCall = { dialPhone(contact.phoneNumber) },
-                        onWhatsApp = { openWhatsApp(contact.phoneNumber) },
-                        onCopy = { copyPhone(contact.phoneNumber, contact.displayName) },
-                        onEditOwn = { isEditOwnContactOpen = true }
-                    )
-                }
-            }
-
+            stationContactsItems(
+                appUser = appUser,
+                stationContacts = stationContacts,
+                filteredContacts = filteredContacts,
+                searchQuery = searchQuery,
+                onSearchQueryChange = { searchQuery = it },
+                roleFilter = roleFilter,
+                onRoleFilterChange = { roleFilter = it },
+                onCall = { dialStationContactPhone(context, it) },
+                onWhatsApp = { openStationContactWhatsApp(context, it) },
+                onCopy = { phone, ownerName -> copyStationContactPhone(context, phone, ownerName) },
+                onEditOwn = { isEditOwnContactOpen = true }
+            )
             item { Spacer(modifier = Modifier.height(16.dp)) }
         }
     }
@@ -369,6 +159,258 @@ fun StationContactsSection(
                 )
             }
         )
+    }
+}
+
+internal fun LazyListScope.stationContactsItems(
+    appUser: AppUser?,
+    stationContacts: List<AppUser>,
+    filteredContacts: List<AppUser>,
+    searchQuery: String,
+    onSearchQueryChange: (String) -> Unit,
+    roleFilter: StationContactRoleFilter,
+    onRoleFilterChange: (StationContactRoleFilter) -> Unit,
+    onCall: (String) -> Unit,
+    onWhatsApp: (String) -> Unit,
+    onCopy: (String, String) -> Unit,
+    onEditOwn: () -> Unit,
+    itemModifier: Modifier = Modifier
+) {
+    val stationCode = appUser?.oicStationCode?.trim()?.uppercase().orEmpty()
+    val stationName = appUser?.stationName?.takeIf { it.isNotBlank() } ?: stationCode.ifBlank { "පොලිස් ස්ථානය" }
+
+    // 1. Station Scoped Banner Card
+    item(key = "station_contacts_banner") {
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = PoliceNavyDark),
+            elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
+            modifier = itemModifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(CircleShape)
+                                .background(BadgeGold),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Contacts,
+                                contentDescription = null,
+                                tint = PoliceNavyDark,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column {
+                            Text(
+                                text = "ස්ථානීය නිලධාරී සබඳතා ලැයිස්තුව",
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                            Text(
+                                text = "$stationName • $stationCode",
+                                fontSize = 11.sp,
+                                color = BadgeGold,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = Color.White.copy(alpha = 0.16f)
+                    ) {
+                        Text(
+                            text = "${stationContacts.size} දෙනෙක්",
+                            color = Color.White,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Text(
+                    text = "ඔබගේ පොලිස් ස්ථානයට ($stationCode) අනුමත OIC, පාලන අංශය සහ නිලධාරීන්ට පමණක් දිස්වන පෞද්ගලික සබඳතා ලැයිස්තුව.",
+                    fontSize = 11.sp,
+                    color = Color.White.copy(alpha = 0.85f),
+                    lineHeight = 15.sp
+                )
+            }
+        }
+    }
+
+    // 2. Prompt if current user has no phone number saved yet (legacy accounts)
+    val currentUserHasValidPhone = (appUser?.phoneNumber?.filter { it.isDigit() }?.length ?: 0) >= 9
+    if (!currentUserHasValidPhone && appUser != null) {
+        item(key = "station_contacts_missing_phone") {
+            Card(
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+                modifier = itemModifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Warning,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.error
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "ඔබගේ දුරකථන අංකය සටහන් කර නැත",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                        Text(
+                            text = "ස්ථානයේ අනෙකුත් නිලධාරීන්ට ඔබව සම්බන්ධ කර ගැනීමට දුරකථන අංකය එක් කරන්න.",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = onEditOwn,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.error,
+                            contentColor = Color.White
+                        ),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.testTag("add_missing_phone_btn")
+                    ) {
+                        Text("එක් කරන්න", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. Search Bar & Filter Chips
+    item(key = "station_contacts_search_filter") {
+        Column(
+            modifier = itemModifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = onSearchQueryChange,
+                placeholder = {
+                    Text(
+                        "නම, නිලය, නිල අංකය හෝ දුරකථන අංකය සොයන්න...",
+                        fontSize = 13.sp
+                    )
+                },
+                leadingIcon = {
+                    Icon(Icons.Default.Search, contentDescription = "Search Station Contacts")
+                },
+                trailingIcon = {
+                    if (searchQuery.isNotEmpty()) {
+                        IconButton(onClick = { onSearchQueryChange("") }) {
+                            Icon(Icons.Default.Clear, contentDescription = "Clear Search")
+                        }
+                    }
+                },
+                singleLine = true,
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("station_contacts_search_input")
+            )
+
+            LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(StationContactRoleFilter.entries) { filter ->
+                    val count = when (filter) {
+                        StationContactRoleFilter.ALL -> stationContacts.size
+                        StationContactRoleFilter.LEADERSHIP -> stationContacts.count { it.role == "OIC" || it.role == "ADMIN_BRANCH" }
+                        StationContactRoleFilter.OFFICERS -> stationContacts.count { it.role == "OFFICER" }
+                    }
+                    FilterChip(
+                        selected = roleFilter == filter,
+                        onClick = { onRoleFilterChange(filter) },
+                        label = {
+                            Text(
+                                text = "${filter.label} ($count)",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    )
+                }
+            }
+        }
+    }
+
+    // 4. Empty State or Station Contact Cards
+    if (filteredContacts.isEmpty()) {
+        item(key = "station_contacts_empty") {
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                modifier = itemModifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(32.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.ContactPhone,
+                        contentDescription = null,
+                        tint = PoliceThemeColors.mutedText,
+                        modifier = Modifier.size(48.dp)
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        text = if (stationContacts.isEmpty()) {
+                            "මෙම පොලිස් ස්ථානයට අනුමත නිලධාරී සබඳතා තවම නොමැත."
+                        } else {
+                            "සෙවුමට ගැළපෙන නිලධාරියෙකු හමු නොවීය."
+                        },
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+    } else {
+        items(filteredContacts, key = { "contact_${it.uid}" }) { contact ->
+            Box(modifier = itemModifier.fillMaxWidth()) {
+                StationContactCard(
+                    contact = contact,
+                    isMe = contact.uid == appUser?.uid,
+                    onCall = { onCall(contact.phoneNumber) },
+                    onWhatsApp = { onWhatsApp(contact.phoneNumber) },
+                    onCopy = { onCopy(contact.phoneNumber, contact.displayName) },
+                    onEditOwn = onEditOwn
+                )
+            }
+        }
     }
 }
 
@@ -613,7 +655,7 @@ private fun StationContactCard(
 }
 
 @Composable
-private fun EditOwnStationContactDialog(
+internal fun EditOwnStationContactDialog(
     initialPhone: String,
     initialBadge: String,
     initialRank: String,

@@ -9,9 +9,12 @@ import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 
 private val DarkColorScheme =
     darkColorScheme(
@@ -111,5 +114,13 @@ fun MyApplicationTheme(
             else -> LightColorScheme
         }
 
-    MaterialTheme(colorScheme = colorScheme, typography = Typography, content = content)
+    val currentDensity = LocalDensity.current
+    val compactFontDensity = Density(
+        density = currentDensity.density,
+        fontScale = (currentDensity.fontScale * 0.56f).coerceIn(0.50f, 0.85f)
+    )
+
+    CompositionLocalProvider(LocalDensity provides compactFontDensity) {
+        MaterialTheme(colorScheme = colorScheme, typography = Typography, content = content)
+    }
 }

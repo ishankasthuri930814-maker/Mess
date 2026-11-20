@@ -9,15 +9,18 @@ import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.zIndex
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.ui.theme.BadgeGoldBright
 import com.example.ui.theme.PoliceNavyDark
@@ -36,6 +39,7 @@ fun OfficerMapDialog(
     val myLocationHistory by viewModel.myLocationHistory.collectAsStateWithLifecycle()
     val emergencyAlerts by viewModel.nearbyEmergencyAlerts.collectAsStateWithLifecycle()
     val myLocation by viewModel.myCurrentLocation.collectAsStateWithLifecycle()
+    val myLocationAccuracy by viewModel.myLocationAccuracyMeters.collectAsStateWithLifecycle()
     val activeRouteState by viewModel.activeRouteState.collectAsStateWithLifecycle()
     val selectedMapDate by viewModel.selectedMapDate.collectAsStateWithLifecycle()
 
@@ -49,6 +53,10 @@ fun OfficerMapDialog(
         listOfNotNull(appUser)
     }
     val historyForMap = if (isOic) stationLocationHistory else myLocationHistory
+
+    LaunchedEffect(Unit) {
+        viewModel.refreshCurrentLocation(showFeedback = false)
+    }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -65,6 +73,7 @@ fun OfficerMapDialog(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .zIndex(2f)
                         .background(PoliceNavyDark)
                         .padding(horizontal = 14.dp, vertical = 10.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -119,12 +128,18 @@ fun OfficerMapDialog(
                     }
                 }
 
-                Box(modifier = Modifier.weight(1f)) {
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .clipToBounds()
+                ) {
                     PoliceLiveMapView(
                         officers = officersForMap,
                         locationHistory = historyForMap,
                         emergencyAlerts = emergencyAlerts,
                         myLocation = myLocation,
+                        myLocationAccuracyMeters = myLocationAccuracy,
                         activeRouteState = activeRouteState,
                         selectedDateKey = selectedMapDate,
                         isOicView = isOic,

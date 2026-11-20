@@ -58,6 +58,10 @@ import com.example.data.AppUser
 import com.example.notifications.NotificationHelper
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.messaging.FirebaseMessaging
+import android.os.Looper
+import com.google.android.gms.location.LocationCallback
+import com.google.android.gms.location.LocationRequest
+import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import kotlin.math.max
@@ -281,6 +285,8 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
     private var fetchUserJob: Job? = null
     private var locationJob: Job? = null
     private var activeTrackingKey: String? = null
+    private var activeLocationCallback: LocationCallback? = null
+    private var activePlatformLocationListener: android.location.LocationListener? = null
     private val fusedLocationClient = LocationServices.getFusedLocationProviderClient(application)
 
     // --- Subordinates (for OIC & Admin Branch) ---
@@ -453,6 +459,11 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
     private val _myCurrentLocation = MutableStateFlow<Pair<Double, Double>?>(null)
     val myCurrentLocation: StateFlow<Pair<Double, Double>?> = _myCurrentLocation.asStateFlow()
 
+    private val _myLocationAccuracyMeters = MutableStateFlow<Float?>(null)
+    val myLocationAccuracyMeters: StateFlow<Float?> = _myLocationAccuracyMeters.asStateFlow()
+
+    private val _liveLocalTrail = MutableStateFlow<List<LocationHistoryPoint>>(emptyList())
+
     private val _selectedMapDate = MutableStateFlow(DateTimeUtils.getTodayKey())
     val selectedMapDate: StateFlow<String> = _selectedMapDate.asStateFlow()
 
@@ -462,8 +473,20 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
         }
     }
 
+    private fun mergeTrailWithLiveLocal(
+        remote: List<LocationHistoryPoint>,
+        local: List<LocationHistoryPoint>,
+        dateKey: String
+    ): List<LocationHistoryPoint> {
+        if (dateKey != DateTimeUtils.getTodayKey() || local.isEmpty()) return remote
+        val merged = (remote + local.filter { it.dateKey == dateKey })
+            .distinctBy { "${it.officerId}_${it.timestamp / 2000L}_${(it.lat * 100_000).toLong()}_${(it.lng * 100_000).toLong()}" }
+            .sortedBy { it.timestamp }
+        return merged
+    }
+
     @OptIn(ExperimentalCoroutinesApi::class)
-    val stationLocationHistory: StateFlow<List<LocationHistoryPoint>> = combine(
+    private val remoteStationLocationHistory = combine(
         _appUser,
         _selectedMapDate
     ) { user, dateKey ->
@@ -479,10 +502,18 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
         } else {
             flow { emit(emptyList<LocationHistoryPoint>()) }
         }
+    }
+
+    val stationLocationHistory: StateFlow<List<LocationHistoryPoint>> = combine(
+        remoteStationLocationHistory,
+        _liveLocalTrail,
+        _selectedMapDate
+    ) { remote, local, dateKey ->
+        mergeTrailWithLiveLocal(remote, local, dateKey)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), emptyList())
 
     @OptIn(ExperimentalCoroutinesApi::class)
-    val myLocationHistory: StateFlow<List<LocationHistoryPoint>> = combine(
+    private val remoteMyLocationHistory = combine(
         _appUser,
         _selectedMapDate
     ) { user, dateKey ->
@@ -497,6 +528,14 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
         } else {
             flow { emit(emptyList<LocationHistoryPoint>()) }
         }
+    }
+
+    val myLocationHistory: StateFlow<List<LocationHistoryPoint>> = combine(
+        remoteMyLocationHistory,
+        _liveLocalTrail,
+        _selectedMapDate
+    ) { remote, local, dateKey ->
+        mergeTrailWithLiveLocal(remote, local, dateKey)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), emptyList())
 
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -571,6 +610,10 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
     private var lastBreadcrumbLng: Double = 0.0
     private var lastBreadcrumbTimeMs: Long = 0L
     private var lastBreadcrumbDutyType: String = ""
+    private var lastLocalTrailLat: Double = 0.0
+    private var lastLocalTrailLng: Double = 0.0
+    private var lastLocalTrailTimeMs: Long = 0L
+    private var lastLocationFixTimeMs: Long = 0L
 
     // --- Team Duty QR Sessions (Strictly scoped per UID & verified against membership) ---
     private val _activeTeamDutyId = MutableStateFlow(
@@ -900,6 +943,7 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
     }
 
     override fun onCleared() {
+        stopRealtimeLocationUpdates()
         super.onCleared()
         auth.removeAuthStateListener(authStateListener)
         fetchUserJob?.cancel()
@@ -966,6 +1010,8 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
                         repository.clearLocalProfile()
                         locationJob?.cancel()
                         locationJob = null
+                        stopRealtimeLocationUpdates()
+                        _liveLocalTrail.value = emptyList()
                         activeTrackingKey = null
                         lastFcmSyncKey = null
                     }
@@ -973,7 +1019,7 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
         }
     }
 
-    private suspend fun obtainFreshLocation(): android.location.Location? {
+    private fun hasLocationPermission(): Boolean {
         val hasFine = androidx.core.content.ContextCompat.checkSelfPermission(
             getApplication(),
             android.Manifest.permission.ACCESS_FINE_LOCATION
@@ -982,106 +1028,311 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
             getApplication(),
             android.Manifest.permission.ACCESS_COARSE_LOCATION
         ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        return hasFine || hasCoarse
+    }
 
-        if (!hasFine && !hasCoarse) return null
+    private fun getBestPlatformLastKnownLocation(): android.location.Location? {
+        if (!hasLocationPermission()) return null
+        val lm = getApplication<Application>().getSystemService(Context.LOCATION_SERVICE) as? android.location.LocationManager
+            ?: return null
+        val hasFine = androidx.core.content.ContextCompat.checkSelfPermission(
+            getApplication(),
+            android.Manifest.permission.ACCESS_FINE_LOCATION
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        val providers = buildList {
+            if (hasFine) add(android.location.LocationManager.GPS_PROVIDER)
+            add(android.location.LocationManager.NETWORK_PROVIDER)
+            add(android.location.LocationManager.PASSIVE_PROVIDER)
+        }
+        val candidates = providers.mapNotNull { provider ->
+            try {
+                lm.getLastKnownLocation(provider)
+            } catch (_: SecurityException) {
+                null
+            } catch (_: Exception) {
+                null
+            }
+        }.filter { it.latitude != 0.0 || it.longitude != 0.0 }
+        val now = System.currentTimeMillis()
+        return candidates
+            .filter { (now - it.time) <= 30 * 60_000L }
+            .minWithOrNull(compareBy<android.location.Location> { it.accuracy }.thenByDescending { it.time })
+            ?: candidates.maxByOrNull { it.time }
+    }
 
+    private suspend fun obtainFreshLocation(): android.location.Location? {
+        if (!hasLocationPermission()) return null
+
+        // 1. Instant cached seed so blue dot & accuracy appear immediately (<100ms) while acquiring fresh GPS
+        val fusedLast = try {
+            fusedLocationClient.lastLocation.await()
+        } catch (_: Exception) {
+            null
+        }?.takeIf { it.latitude != 0.0 || it.longitude != 0.0 }
+        val platformLast = getBestPlatformLastKnownLocation()
+        val bestCached = listOfNotNull(fusedLast, platformLast)
+            .minWithOrNull(compareBy<android.location.Location> { it.accuracy }.thenByDescending { it.time })
+        if (bestCached != null && _myCurrentLocation.value == null) {
+            processIncomingLocation(bestCached, overrideIsOnDuty = null, persistToFirestore = false)
+        }
+
+        // 2. Request fresh high-accuracy fix
         var loc: android.location.Location? = null
         try {
-            withTimeoutOrNull(6000) {
+            withTimeoutOrNull(5000) {
                 loc = fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null).await()
             }
         } catch (_: Exception) {
             // ignore
         }
-        if (loc == null) {
-            try {
-                loc = fusedLocationClient.lastLocation.await()
-            } catch (_: Exception) {
-                // ignore
+        if (loc == null || loc!!.accuracy > 65f) {
+            val freshPlatform = getBestPlatformLastKnownLocation()
+            val chosenLast = listOfNotNull(fusedLast, freshPlatform)
+                .filter { (System.currentTimeMillis() - it.time) <= 120_000L }
+                .minByOrNull { it.accuracy }
+            if (chosenLast != null && (loc == null || chosenLast.accuracy < loc!!.accuracy)) {
+                loc = chosenLast
             }
         }
         if (loc == null) {
             try {
-                withTimeoutOrNull(4000) {
+                withTimeoutOrNull(3500) {
                     loc = fusedLocationClient.getCurrentLocation(Priority.PRIORITY_BALANCED_POWER_ACCURACY, null).await()
                 }
             } catch (_: Exception) {
                 // ignore
             }
         }
-        if (loc != null) {
-            _myCurrentLocation.value = Pair(loc!!.latitude, loc!!.longitude)
-        }
-        return loc
+        val finalLoc = loc ?: bestCached
+        finalLoc?.let { processIncomingLocation(it, overrideIsOnDuty = null, persistToFirestore = false) }
+        return finalLoc
     }
 
-    fun refreshCurrentLocation(showFeedback: Boolean = false, overrideIsOnDuty: Boolean? = null) {
+    private fun processIncomingLocation(
+        location: android.location.Location,
+        overrideIsOnDuty: Boolean? = null,
+        persistToFirestore: Boolean = true
+    ) {
+        if (location.latitude == 0.0 && location.longitude == 0.0) return
+        val nowMs = System.currentTimeMillis()
+        val prevFix = _myCurrentLocation.value
+        val prevAcc = _myLocationAccuracyMeters.value
+
+        // Reject noisy cell-tower jumps (> 75m inaccuracy) if we already have a recent accurate fix
+        if (prevFix != null && prevAcc != null && prevAcc <= 35f &&
+            location.accuracy > 75f && (nowMs - lastLocationFixTimeMs) < 90_000L &&
+            overrideIsOnDuty == null
+        ) {
+            return
+        }
+
+        _myCurrentLocation.value = Pair(location.latitude, location.longitude)
+        _myLocationAccuracyMeters.value = location.accuracy
+        lastLocationFixTimeMs = nowMs
+
         val user = _appUser.value ?: return
-        val dutyStatus = overrideIsOnDuty ?: user.isOnDuty
+        val latestDuty = overrideIsOnDuty ?: user.isOnDuty
+        val dutyTypeStr = if (latestDuty) "ON_DUTY" else "OFF_DUTY"
+        val today = DateTimeUtils.getTodayKey()
+
+        // High-precision local live trail (records tiny movements >= 3 meters cleanly)
+        val localMovedMeters = if (lastLocalTrailTimeMs == 0L) Double.MAX_VALUE
+        else GeoRouteUtils.distanceMeters(lastLocalTrailLat, lastLocalTrailLng, location.latitude, location.longitude)
+
+        val acceptLocalPoint = when {
+            overrideIsOnDuty != null -> true
+            lastLocalTrailTimeMs == 0L -> location.accuracy <= 65f || prevFix == null
+            location.accuracy <= 25f && localMovedMeters >= 3.0 -> true
+            location.accuracy <= 45f && localMovedMeters >= 6.0 -> true
+            else -> false
+        }
+
+        if (acceptLocalPoint && user.status == "APPROVED") {
+            lastLocalTrailLat = location.latitude
+            lastLocalTrailLng = location.longitude
+            lastLocalTrailTimeMs = nowMs
+            val pt = LocationHistoryPoint(
+                officerId = user.uid,
+                officerName = user.displayName.ifBlank { user.email },
+                oicStationCode = user.oicStationCode ?: "",
+                dateKey = today,
+                dayStationKey = "${user.oicStationCode ?: ""}_$today",
+                officerDayKey = "${user.uid}_$today",
+                lat = location.latitude,
+                lng = location.longitude,
+                accuracy = location.accuracy,
+                dutyType = dutyTypeStr,
+                timestamp = nowMs
+            )
+            val existingToday = _liveLocalTrail.value.filter { it.dateKey == today && it.officerId == user.uid }
+            _liveLocalTrail.value = (existingToday + pt).takeLast(400)
+        }
+
+        if (!persistToFirestore || user.status != "APPROVED") return
+
         viewModelScope.launch(Dispatchers.IO) {
+            try {
+                if (user.role == "OFFICER") {
+                    val isExplicitOffDuty = overrideIsOnDuty == false
+                    val distFromLastSaved = if (lastBreadcrumbTimeMs == 0L) Double.MAX_VALUE
+                    else GeoRouteUtils.distanceMeters(lastBreadcrumbLat, lastBreadcrumbLng, location.latitude, location.longitude)
+                    val shouldUpdateUserPin = isExplicitOffDuty ||
+                        overrideIsOnDuty != null ||
+                        distFromLastSaved >= 4.0 ||
+                        (nowMs - lastBreadcrumbTimeMs) >= 15_000L
+                    if (shouldUpdateUserPin) {
+                        repository.updateLastLocation(
+                            uid = user.uid,
+                            lat = location.latitude,
+                            lng = location.longitude,
+                            isOnDuty = latestDuty,
+                            recordOffDutySpot = isExplicitOffDuty
+                        )
+                    }
+                }
+
+                // Record cloud GPS trail breadcrumb (5m fine movement or 45s while On Duty / OIC)
+                val movedMeters = if (lastBreadcrumbTimeMs == 0L) Double.MAX_VALUE
+                else GeoRouteUtils.distanceMeters(lastBreadcrumbLat, lastBreadcrumbLng, location.latitude, location.longitude)
+                val throttleElapsed = (nowMs - lastBreadcrumbTimeMs) >= 4_500L
+                val isAccurateForTrail = location.accuracy <= 45f || overrideIsOnDuty != null
+                val shouldLogBreadcrumb = overrideIsOnDuty != null || (
+                    isAccurateForTrail && throttleElapsed &&
+                        (latestDuty || user.role == "OIC") &&
+                        (movedMeters >= 5.0 || (nowMs - lastBreadcrumbTimeMs) >= 45_000L || lastBreadcrumbDutyType != dutyTypeStr)
+                    )
+
+                if (shouldLogBreadcrumb) {
+                    lastBreadcrumbLat = location.latitude
+                    lastBreadcrumbLng = location.longitude
+                    lastBreadcrumbTimeMs = nowMs
+                    lastBreadcrumbDutyType = dutyTypeStr
+                    repository.addLocationBreadcrumb(
+                        LocationHistoryPoint(
+                            officerId = user.uid,
+                            officerName = user.displayName.ifBlank { user.email },
+                            oicStationCode = user.oicStationCode ?: "",
+                            dateKey = today,
+                            dayStationKey = "${user.oicStationCode ?: ""}_$today",
+                            officerDayKey = "${user.uid}_$today",
+                            lat = location.latitude,
+                            lng = location.longitude,
+                            accuracy = location.accuracy,
+                            dutyType = dutyTypeStr,
+                            timestamp = nowMs
+                        )
+                    )
+                }
+            } catch (e: Exception) {
+                Log.w("PoliceViewModel", "Error syncing GPS point", e)
+            }
+        }
+    }
+
+    private fun startRealtimeLocationUpdates() {
+        if (!hasLocationPermission()) return
+
+        if (activeLocationCallback == null) {
+            val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 2500L)
+                .setMinUpdateIntervalMillis(1500L)
+                .setMinUpdateDistanceMeters(2.0f)
+                .setWaitForAccurateLocation(false)
+                .build()
+
+            val callback = object : LocationCallback() {
+                override fun onLocationResult(result: LocationResult) {
+                    val best = result.locations
+                        .filter { it.latitude != 0.0 || it.longitude != 0.0 }
+                        .minByOrNull { it.accuracy }
+                        ?: result.lastLocation
+                        ?: return
+                    processIncomingLocation(best, overrideIsOnDuty = null, persistToFirestore = true)
+                }
+            }
+
+            try {
+                fusedLocationClient.requestLocationUpdates(request, callback, Looper.getMainLooper())
+                activeLocationCallback = callback
+            } catch (e: SecurityException) {
+                Log.w("PoliceViewModel", "Location permission missing when starting real-time updates", e)
+            } catch (e: Exception) {
+                Log.w("PoliceViewModel", "Could not start real-time location updates", e)
+            }
+        }
+
+        // Parallel hardware GPS_PROVIDER listener for devices/emulators where Fused lags
+        if (activePlatformLocationListener == null) {
             val hasFine = androidx.core.content.ContextCompat.checkSelfPermission(
                 getApplication(),
                 android.Manifest.permission.ACCESS_FINE_LOCATION
             ) == android.content.pm.PackageManager.PERMISSION_GRANTED
-            val hasCoarse = androidx.core.content.ContextCompat.checkSelfPermission(
-                getApplication(),
-                android.Manifest.permission.ACCESS_COARSE_LOCATION
-            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+            if (hasFine) {
+                val lm = getApplication<Application>().getSystemService(Context.LOCATION_SERVICE) as? android.location.LocationManager
+                if (lm != null && lm.isProviderEnabled(android.location.LocationManager.GPS_PROVIDER)) {
+                    val listener = android.location.LocationListener { loc ->
+                        processIncomingLocation(loc, overrideIsOnDuty = null, persistToFirestore = true)
+                    }
+                    try {
+                        lm.requestLocationUpdates(
+                            android.location.LocationManager.GPS_PROVIDER,
+                            2000L,
+                            1.5f,
+                            listener,
+                            Looper.getMainLooper()
+                        )
+                        activePlatformLocationListener = listener
+                    } catch (e: Exception) {
+                        Log.w("PoliceViewModel", "Hardware GPS_PROVIDER listener unavailable", e)
+                    }
+                }
+            }
+        }
+    }
 
-            if (!hasFine && !hasCoarse) {
+    private fun stopRealtimeLocationUpdates() {
+        activeLocationCallback?.let { cb ->
+            try {
+                fusedLocationClient.removeLocationUpdates(cb)
+            } catch (_: Exception) {
+                // ignore
+            }
+        }
+        activeLocationCallback = null
+
+        activePlatformLocationListener?.let { listener ->
+            try {
+                val lm = getApplication<Application>().getSystemService(Context.LOCATION_SERVICE) as? android.location.LocationManager
+                lm?.removeUpdates(listener)
+            } catch (_: Exception) {
+                // ignore
+            }
+        }
+        activePlatformLocationListener = null
+    }
+
+    fun refreshCurrentLocation(showFeedback: Boolean = false, overrideIsOnDuty: Boolean? = null) {
+        val user = _appUser.value ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            if (!hasLocationPermission()) {
                 if (showFeedback) {
                     _userMessage.emit("GPS අවසරය ලබාදී නොමැත.")
                 }
                 return@launch
             }
 
+            // Ensure continuous real-time GPS listener is active once permission is granted
+            withContext(Dispatchers.Main) {
+                startRealtimeLocationUpdates()
+            }
+
             try {
                 val finalLoc = obtainFreshLocation()
                 if (finalLoc != null) {
-                    val latestDuty = overrideIsOnDuty ?: (_appUser.value?.isOnDuty ?: dutyStatus)
-                    if (user.role == "OFFICER") {
-                        val isExplicitOffDuty = overrideIsOnDuty == false
-                        repository.updateLastLocation(
-                            uid = user.uid,
-                            lat = finalLoc.latitude,
-                            lng = finalLoc.longitude,
-                            isOnDuty = latestDuty,
-                            recordOffDutySpot = isExplicitOffDuty
-                        )
-
-                        // Record GPS trail breadcrumb while On Duty or on explicit Off-Duty transition
-                        val dutyTypeStr = if (latestDuty) "ON_DUTY" else "OFF_DUTY"
-                        val nowMs = System.currentTimeMillis()
-                        val movedMeters = if (lastBreadcrumbTimeMs == 0L) Double.MAX_VALUE
-                        else GeoRouteUtils.distanceMeters(lastBreadcrumbLat, lastBreadcrumbLng, finalLoc.latitude, finalLoc.longitude)
-                        val shouldLogBreadcrumb = overrideIsOnDuty != null ||
-                            (latestDuty && (movedMeters >= 18.0 || (nowMs - lastBreadcrumbTimeMs) >= 90_000L || lastBreadcrumbDutyType != dutyTypeStr))
-
-                        if (shouldLogBreadcrumb) {
-                            lastBreadcrumbLat = finalLoc.latitude
-                            lastBreadcrumbLng = finalLoc.longitude
-                            lastBreadcrumbTimeMs = nowMs
-                            lastBreadcrumbDutyType = dutyTypeStr
-                            val today = DateTimeUtils.getTodayKey()
-                            repository.addLocationBreadcrumb(
-                                LocationHistoryPoint(
-                                    officerId = user.uid,
-                                    officerName = user.displayName.ifBlank { user.email },
-                                    oicStationCode = user.oicStationCode ?: "",
-                                    dateKey = today,
-                                    dayStationKey = "${user.oicStationCode ?: ""}_$today",
-                                    officerDayKey = "${user.uid}_$today",
-                                    lat = finalLoc.latitude,
-                                    lng = finalLoc.longitude,
-                                    accuracy = finalLoc.accuracy,
-                                    dutyType = dutyTypeStr,
-                                    timestamp = nowMs
-                                )
-                            )
-                        }
-                    }
+                    processIncomingLocation(finalLoc, overrideIsOnDuty = overrideIsOnDuty, persistToFirestore = true)
                     if (showFeedback) {
-                        _userMessage.emit("GPS ස්ථානය සාර්ථකව යාවත්කාලීන විය (${String.format("%.4f", finalLoc.latitude)}, ${String.format("%.4f", finalLoc.longitude)}).")
+                        _userMessage.emit(
+                            "GPS ස්ථානය යාවත්කාලීන විය (±${finalLoc.accuracy.toInt()}m • ${String.format("%.5f", finalLoc.latitude)}, ${String.format("%.5f", finalLoc.longitude)})"
+                        )
                     }
                 } else if (showFeedback) {
                     _userMessage.emit("GPS ස්ථානය ලබා ගැනීමට නොහැකි විය. කරුණාකර දුරකථනයේ Location (GPS) සක්‍රිය කර ඇත්දැයි බලන්න.")
@@ -1241,10 +1492,8 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
     }
 
     private fun updateLocationTracking(user: AppUser) {
-        val newKey = if (user.role == "OFFICER" && user.status == "APPROVED") {
+        val newKey = if (user.status == "APPROVED") {
             "${user.uid}:${user.role}:${user.status}:${user.isOnDuty}"
-        } else if (user.role == "OIC") {
-            "${user.uid}:${user.role}:${user.status}"
         } else {
             null
         }
@@ -1252,12 +1501,21 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
         activeTrackingKey = newKey
         locationJob?.cancel()
         locationJob = null
+        stopRealtimeLocationUpdates()
         if (newKey != null) {
+            startRealtimeLocationUpdates()
             locationJob = viewModelScope.launch(Dispatchers.IO) {
                 refreshCurrentLocation()
-                while (isActive && user.role == "OFFICER" && _appUser.value?.isOnDuty == true) {
-                    delay(25_000L) // Update every 25 seconds while on duty for crisp live trail & stay tracking
-                    refreshCurrentLocation()
+                while (isActive && _appUser.value?.status == "APPROVED") {
+                    delay(12_000L) // Backup heartbeat every 12s alongside real-time 2.5s LocationCallback
+                    if (hasLocationPermission() && activeLocationCallback == null) {
+                        withContext(Dispatchers.Main) {
+                            startRealtimeLocationUpdates()
+                        }
+                    }
+                    if ((System.currentTimeMillis() - lastLocationFixTimeMs) >= 12_000L) {
+                        refreshCurrentLocation()
+                    }
                 }
             }
         }
