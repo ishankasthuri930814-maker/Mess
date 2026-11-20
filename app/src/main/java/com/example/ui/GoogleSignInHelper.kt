@@ -10,7 +10,6 @@ import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
 import androidx.credentials.exceptions.NoCredentialException
-import com.example.R
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
@@ -31,6 +30,18 @@ fun Context.findActivity(): Activity? {
     return null
 }
 
+private fun resolveDefaultWebClientId(context: Context): String? {
+    val resId = context.resources.getIdentifier(
+        "default_web_client_id",
+        "string",
+        context.packageName
+    )
+    if (resId == 0) return null
+    return context.getString(resId).trim().takeIf {
+        it.isNotEmpty() && !it.startsWith("placeholder", ignoreCase = true)
+    }
+}
+
 fun attemptAutoSignIn(
     context: Context,
     credentialManager: CredentialManager,
@@ -42,9 +53,8 @@ fun attemptAutoSignIn(
         onAuthSuccess()
         return
     }
-    val clientId = try {
-        context.getString(R.string.default_web_client_id)
-    } catch (_: Exception) {
+    val clientId = resolveDefaultWebClientId(context)
+    if (clientId == null) {
         onUnauthenticated()
         return
     }
@@ -95,10 +105,13 @@ fun launchGoogleSignIn(
     scope.launch {
         try {
             val targetContext = context.findActivity() ?: context
+            val clientId = resolveDefaultWebClientId(context)
+            if (clientId == null) {
+                onAuthError("Firebase වින්‍යාසය (google-services.json) සොයාගත නොහැක.")
+                return@launch
+            }
 
-            val googleIdOption = GetSignInWithGoogleOption.Builder(
-                context.getString(R.string.default_web_client_id)
-            ).build()
+            val googleIdOption = GetSignInWithGoogleOption.Builder(clientId).build()
 
             val request = GetCredentialRequest.Builder()
                 .addCredentialOption(googleIdOption)

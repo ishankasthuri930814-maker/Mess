@@ -46,12 +46,29 @@ jobs:
             keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug, O=Android, C=US"
           fi
 
-      - name: Fallback Google API Key if google-services.json is absent
+      - name: Restore Google Services Config (if secret exists)
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          if [ ! -f "app/google-services.json" ] && [ -n "$GOOGLE_SERVICES_JSON" ]; then
+            if echo "$GOOGLE_SERVICES_JSON" | grep -q '{'; then
+              printf '%s\n' "$GOOGLE_SERVICES_JSON" > app/google-services.json
+            else
+              printf '%s' "$GOOGLE_SERVICES_JSON" | tr -d '\r\n' | base64 -d > app/google-services.json
+            fi
+          fi
+
+      - name: Fallback Google Strings if google-services.json is absent
         run: |
           if [ ! -f "app/google-services.json" ]; then
             STRINGS_FILE="app/src/main/res/values/strings.xml"
-            if [ -f "$STRINGS_FILE" ] && ! grep -q "google_api_key" "$STRINGS_FILE"; then
-              sed -i '/<\/resources>/i \    <string name="google_api_key">AIzaSy_placeholder_key</string>' "$STRINGS_FILE"
+            if [ -f "$STRINGS_FILE" ]; then
+              if ! grep -q "google_api_key" "$STRINGS_FILE"; then
+                sed -i '/<\/resources>/i \    <string name="google_api_key" translatable="false">AIzaSy_placeholder_key</string>' "$STRINGS_FILE"
+              fi
+              if ! grep -q "default_web_client_id" "$STRINGS_FILE"; then
+                sed -i '/<\/resources>/i \    <string name="default_web_client_id" translatable="false">placeholder_web_client_id</string>' "$STRINGS_FILE"
+              fi
             fi
           fi
 
