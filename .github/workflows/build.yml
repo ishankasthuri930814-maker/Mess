@@ -19,12 +19,13 @@ jobs:
           distribution: 'temurin'
           java-version: '21'
 
-      - name: Accept Android SDK Licenses
+      - name: Prepare Android SDK 36.1
         run: |
           SDK_DIR="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
           SDKMANAGER="$(command -v sdkmanager || find "$SDK_DIR/cmdline-tools" -name sdkmanager -type f 2>/dev/null | head -n 1 || true)"
           if [ -n "$SDKMANAGER" ]; then
             yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
+            "$SDKMANAGER" "platform-tools" "platforms;android-36.1" "build-tools;36.0.0" || true
           fi
 
       - name: Cache Gradle packages
@@ -65,7 +66,7 @@ jobs:
           curl -fsSL https://services.gradle.org/distributions/gradle-9.3.1-bin.zip -o /tmp/gradle-9.3.1-bin.zip
           unzip -q /tmp/gradle-9.3.1-bin.zip -d "$HOME"
           export PATH="$HOME/gradle-9.3.1/bin:$PATH"
-          gradle assembleDebug --no-daemon --stacktrace
+          gradle assembleDebug --no-daemon --no-configuration-cache --console=plain -Dorg.gradle.jvmargs="-Xmx3g -Dfile.encoding=UTF-8 -Djava.awt.headless=true" -Dorg.gradle.workers.max=2
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
