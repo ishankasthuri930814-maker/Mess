@@ -54,7 +54,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import com.example.ui.theme.BadgeGold
+import com.example.ui.theme.PoliceThemeColors
 
 @Composable
 fun ConfigureMessRatesDialog(
@@ -105,13 +105,13 @@ fun ConfigureMessRatesDialog(
                         Box(
                             modifier = Modifier
                                 .size(40.dp)
-                                .background(BadgeGold.copy(alpha = 0.2f), CircleShape),
+                                .background(PoliceThemeColors.goldText.copy(alpha = 0.2f), CircleShape),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Payments,
                                 contentDescription = null,
-                                tint = BadgeGold,
+                                tint = PoliceThemeColors.goldText,
                                 modifier = Modifier.size(22.dp)
                             )
                         }
@@ -140,7 +140,7 @@ fun ConfigureMessRatesDialog(
                         onValueChange = { bText = it },
                         label = { Text("උදේ ආහාරයේ මිල (Breakfast Rate in LKR)") },
                         leadingIcon = {
-                            Icon(Icons.Default.WbSunny, contentDescription = null, tint = BadgeGold)
+                            Icon(Icons.Default.WbSunny, contentDescription = null, tint = PoliceThemeColors.goldText)
                         },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         singleLine = true,
@@ -155,7 +155,7 @@ fun ConfigureMessRatesDialog(
                         onValueChange = { lText = it },
                         label = { Text("දිවා ආහාරයේ මිල (Lunch Rate in LKR)") },
                         leadingIcon = {
-                            Icon(Icons.Default.LightMode, contentDescription = null, tint = Color(0xFFF59E0B))
+                            Icon(Icons.Default.LightMode, contentDescription = null, tint = PoliceThemeColors.orangeText)
                         },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         singleLine = true,
@@ -170,7 +170,7 @@ fun ConfigureMessRatesDialog(
                         onValueChange = { dText = it },
                         label = { Text("රාත්‍රී ආහාරයේ මිල (Dinner Rate in LKR)") },
                         leadingIcon = {
-                            Icon(Icons.Default.Bedtime, contentDescription = null, tint = Color(0xFF6366F1))
+                            Icon(Icons.Default.Bedtime, contentDescription = null, tint = PoliceThemeColors.blueText)
                         },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         singleLine = true,

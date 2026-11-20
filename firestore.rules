@@ -31,15 +31,20 @@ service cloud.firestore {
       return data.uid is string &&
              data.displayName is string &&
              data.email is string &&
-             data.role in ['OFFICER', 'OIC'] &&
+             data.role in ['OFFICER', 'OIC', 'ADMIN_BRANCH'] &&
              data.status in ['PENDING', 'APPROVED', 'REJECTED'] &&
              (!('oicEmail' in data) || data.oicEmail is string) &&
              (!('oicStationCode' in data) || data.oicStationCode is string) &&
              (!('stationName' in data) || data.stationName is string) &&
              (!('badgeNumber' in data) || data.badgeNumber is string) &&
              (!('rank' in data) || data.rank is string) &&
+             (!('phoneNumber' in data) || data.phoneNumber is string) &&
+             (!('address' in data) || data.address is string) &&
+             (!('fcmToken' in data) || data.fcmToken is string) &&
              (!('isOnDuty' in data) || data.isOnDuty is bool) &&
              (!('lastLocation' in data) || data.lastLocation is map) &&
+             (!('lastOffDutyLocation' in data) || data.lastOffDutyLocation is map) &&
+             (!('adminSecretSeed' in data) || data.adminSecretSeed is string) &&
              (!('updatedAt' in data) || data.updatedAt is timestamp);
     }
 
@@ -49,7 +54,7 @@ service cloud.firestore {
       
       allow create: if isOwner(userId) && 
                        incoming().uid == userId &&
-                       incoming().role in ['OFFICER', 'OIC'] &&
+                       incoming().role in ['OFFICER', 'OIC', 'ADMIN_BRANCH'] &&
                        incoming().status in ['PENDING', 'APPROVED'] &&
                        isValidUser(incoming());
       
@@ -60,7 +65,11 @@ service cloud.firestore {
                         isValidUser(incoming())) ||
                        (isSignedIn() && 
                         incoming().diff(existing()).affectedKeys().hasOnly(['status']) &&
-                        incoming().status in ['APPROVED', 'REJECTED']);
+                        incoming().status in ['APPROVED', 'REJECTED']) ||
+                       (isSignedIn() &&
+                        incoming().diff(existing()).affectedKeys().hasOnly(['oicStationCode', 'status']) &&
+                        incoming().status in ['PENDING', 'APPROVED'] &&
+                        incoming().oicStationCode is string);
     }
 
     function isValidDutyRecord(data) {
@@ -115,6 +124,196 @@ service cloud.firestore {
                        incoming().officerId == existing().officerId &&
                        isValidMessRecord(incoming());
       allow delete: if isSignedIn() && existing().officerId == request.auth.uid;
+    }
+
+    function isValidRunningChartRecord(data) {
+      return data.officerId is string &&
+             (!('oicStationCode' in data) || data.oicStationCode is string) &&
+             data.date is string &&
+             data.vehicleNumber is string &&
+             data.startMeter is number &&
+             data.endMeter is number &&
+             data.distanceKm is number &&
+             data.kmPerLiter is number &&
+             data.startFuel is number &&
+             data.addedFuel is number &&
+             data.consumedFuel is number &&
+             data.remainingFuel is number &&
+             (!('notes' in data) || data.notes is string) &&
+             data.timestamp is number &&
+             (!('createdAt' in data) || data.createdAt is timestamp);
+    }
+
+    match /running_chart_records/{recordId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() &&
+                       incoming().officerId == request.auth.uid &&
+                       isValidRunningChartRecord(incoming());
+      allow update: if isSignedIn() &&
+                       existing().officerId == request.auth.uid &&
+                       incoming().officerId == existing().officerId &&
+                       isValidRunningChartRecord(incoming());
+      allow delete: if isSignedIn() && existing().officerId == request.auth.uid;
+    }
+
+    function isValidTeamDutySession(data) {
+      return data.sessionId is string &&
+             data.joinCode is string && data.joinCode.size() >= 4 && data.joinCode.size() <= 16 &&
+             data.leaderUid is string &&
+             data.leaderName is string &&
+             (!('leaderBadge' in data) || data.leaderBadge is string) &&
+             (!('leaderRank' in data) || data.leaderRank is string) &&
+             data.oicStationCode is string &&
+             data.dutyNature is string &&
+             (!('ibPage' in data) || data.ibPage is string) &&
+             (!('ibParagraph' in data) || data.ibParagraph is string) &&
+             (!('remarks' in data) || data.remarks is string) &&
+             data.status in ['ACTIVE', 'ENDED'] &&
+             data.startedAtMs is number &&
+             (!('endedAtMs' in data) || data.endedAtMs is number) &&
+             (!('createdAt' in data) || data.createdAt is timestamp);
+    }
+
+    function isValidTeamDutyMember(data) {
+      return data.uid is string &&
+             data.displayName is string &&
+             (!('rank' in data) || data.rank is string) &&
+             (!('badgeNumber' in data) || data.badgeNumber is string) &&
+             (!('phoneNumber' in data) || data.phoneNumber is string) &&
+             data.roleInTeam in ['LEADER', 'MEMBER'] &&
+             data.status in ['ACTIVE', 'LEFT', 'ENDED_BY_LEADER'] &&
+             data.joinedAtMs is number;
+    }
+
+    match /team_duties/{sessionId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() &&
+                       incoming().leaderUid == request.auth.uid &&
+                       incoming().status == 'ACTIVE' &&
+                       isValidTeamDutySession(incoming());
+      allow update: if isSignedIn() &&
+                       existing().leaderUid == request.auth.uid &&
+                       incoming().leaderUid == existing().leaderUid &&
+                       isValidTeamDutySession(incoming());
+      allow delete: if isSignedIn() && existing().leaderUid == request.auth.uid;
+
+      match /members/{memberUid} {
+        allow read: if isSignedIn();
+        allow create, update: if isSignedIn() &&
+                                 request.auth.uid == memberUid &&
+                                 incoming().uid == memberUid &&
+                                 isValidTeamDutyMember(incoming());
+        allow delete: if isSignedIn() && request.auth.uid == memberUid;
+      }
+    }
+
+    function isValidNotification(data) {
+      return data.title is string && data.title.size() >= 1 && data.title.size() <= 120 &&
+             data.message is string && data.message.size() >= 1 && data.message.size() <= 1000 &&
+             data.senderUid is string &&
+             data.senderName is string && data.senderName.size() <= 100 &&
+             data.senderRole in ['OIC', 'OFFICER', 'ADMIN_BRANCH'] &&
+             data.targetType in ['ALL', 'STATION', 'USER'] &&
+             (!('targetStationCode' in data) || data.targetStationCode is string) &&
+             (!('targetUid' in data) || data.targetUid is string) &&
+             data.priority in ['NORMAL', 'URGENT'] &&
+             data.createdAtMs is number &&
+             data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    match /notifications/{notificationId} {
+      allow read: if isSignedIn() && (
+        resource.data.targetType == 'ALL' ||
+        resource.data.senderUid == request.auth.uid ||
+        resource.data.targetUid == request.auth.uid ||
+        (resource.data.targetType == 'STATION' &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.oicStationCode == resource.data.targetStationCode)
+      );
+      allow create: if isSignedIn() &&
+        incoming().senderUid == request.auth.uid &&
+        isValidNotification(incoming()) &&
+        (incoming().targetType != 'ALL' || isOIC());
+      allow delete: if isSignedIn() && resource.data.senderUid == request.auth.uid;
+    }
+
+    function isValidDutyAssignment(data) {
+      return data.id is string &&
+             data.officerId is string &&
+             data.officerName is string &&
+             (!('officerBadge' in data) || data.officerBadge is string) &&
+             (!('officerRank' in data) || data.officerRank is string) &&
+             (!('officerPhone' in data) || data.officerPhone is string) &&
+             data.oicStationCode is string &&
+             data.dateKey is string &&
+             data.dutyNature is string &&
+             (!('shift' in data) || data.shift is string) &&
+             (!('remarks' in data) || data.remarks is string) &&
+             data.assignedByUid is string &&
+             (!('assignedByName' in data) || data.assignedByName is string) &&
+             data.status in ['ASSIGNED', 'COMPLETED', 'MODIFIED'] &&
+             data.createdAtMs is number &&
+             (!('createdAt' in data) || (data.createdAt is timestamp && data.createdAt <= request.time));
+    }
+
+    match /duty_assignments/{assignmentId} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn() && isValidDutyAssignment(incoming());
+      allow delete: if isSignedIn();
+    }
+
+    function isValidLocationHistory(data) {
+      return data.officerId is string &&
+             (!('officerName' in data) || data.officerName is string) &&
+             (!('oicStationCode' in data) || data.oicStationCode is string) &&
+             data.dateKey is string && data.dateKey.size() == 10 &&
+             data.dayStationKey is string &&
+             data.officerDayKey is string &&
+             data.lat is number && data.lat >= -90 && data.lat <= 90 &&
+             data.lng is number && data.lng >= -180 && data.lng <= 180 &&
+             (!('accuracy' in data) || data.accuracy is number) &&
+             data.dutyType in ['ON_DUTY', 'OFF_DUTY'] &&
+             data.timestamp is number &&
+             (!('createdAt' in data) || (data.createdAt is timestamp && data.createdAt <= request.time));
+    }
+
+    match /location_history/{entryId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() &&
+                       incoming().officerId == request.auth.uid &&
+                       isValidLocationHistory(incoming());
+      allow update, delete: if isSignedIn() && existing().officerId == request.auth.uid;
+    }
+
+    function isValidEmergencyAlert(data) {
+      return data.senderUid is string &&
+             data.senderName is string && data.senderName.size() <= 120 &&
+             (!('senderRank' in data) || data.senderRank is string) &&
+             (!('senderBadge' in data) || data.senderBadge is string) &&
+             data.senderRole in ['OIC', 'OFFICER', 'ADMIN_BRANCH'] &&
+             (!('senderPhone' in data) || data.senderPhone is string) &&
+             (!('oicStationCode' in data) || data.oicStationCode is string) &&
+             data.message is string && data.message.size() >= 1 && data.message.size() <= 600 &&
+             data.lat is number && data.lat >= -90 && data.lat <= 90 &&
+             data.lng is number && data.lng >= -180 && data.lng <= 180 &&
+             data.radiusKm is number && data.radiusKm > 0 && data.radiusKm <= 200 &&
+             data.status in ['ACTIVE', 'RESOLVED'] &&
+             data.createdAtMs is number &&
+             (!('createdAt' in data) || (data.createdAt is timestamp && data.createdAt <= request.time));
+    }
+
+    match /emergency_alerts/{alertId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() &&
+                       incoming().senderUid == request.auth.uid &&
+                       incoming().status == 'ACTIVE' &&
+                       isValidEmergencyAlert(incoming());
+      allow update: if isSignedIn() &&
+                       (existing().senderUid == request.auth.uid || isOIC()) &&
+                       incoming().senderUid == existing().senderUid &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['status']) &&
+                       incoming().status in ['ACTIVE', 'RESOLVED'];
+      allow delete: if isSignedIn() &&
+                       (existing().senderUid == request.auth.uid || isOIC());
     }
   }
 }

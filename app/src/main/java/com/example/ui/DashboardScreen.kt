@@ -12,13 +12,16 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Badge
 import androidx.compose.material.icons.filled.Bedtime
@@ -27,15 +30,18 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Compress
 import androidx.compose.material.icons.filled.DirectionsCar
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.LightMode
-import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material.icons.filled.Restaurant
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.WbSunny
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -49,6 +55,11 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.material.icons.filled.CalendarMonth
+import com.example.data.DutyAssignment
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -67,6 +78,7 @@ import com.example.ui.theme.BadgeGoldLight
 import com.example.ui.theme.DutyActiveGreen
 import com.example.ui.theme.DutyOffOrange
 import com.example.ui.theme.PoliceNavyPrimary
+import com.example.ui.theme.PoliceThemeColors
 import com.example.util.DateTimeUtils
 
 @Composable
@@ -79,8 +91,11 @@ fun DashboardScreen(
     onNavigateToProfile: () -> Unit,
     onOpenDutyDialog: (type: String) -> Unit,
     onOpenMealDialog: (mealType: String) -> Unit,
-    onViewPhoto: (path: String, title: String, compKb: Int, origKb: Int) -> Unit
+    onViewPhoto: (path: String, title: String, compKb: Int, origKb: Int) -> Unit,
+    onOpenMap: () -> Unit = {},
+    onOpenSos: () -> Unit = {}
 ) {
+    val appUser by viewModel.appUser.collectAsStateWithLifecycle()
     val profile by viewModel.officerProfile.collectAsStateWithLifecycle()
     val latestDuty by viewModel.latestDutyRecord.collectAsStateWithLifecycle()
     val latestShift by viewModel.latestShiftRecord.collectAsStateWithLifecycle()
@@ -88,10 +103,16 @@ fun DashboardScreen(
     val storageStats by viewModel.storageStats.collectAsStateWithLifecycle()
     val recentDuties by viewModel.filteredDutyRecords.collectAsStateWithLifecycle()
 
+    val myTodayAssignedDuty by viewModel.myTodayAssignedDuty.collectAsStateWithLifecycle()
+    val myDutyAssignments by viewModel.myDutyAssignments.collectAsStateWithLifecycle()
+    var isUpcomingScheduleDialogOpen by remember { mutableStateOf(false) }
+
     val todayDutyHours by viewModel.todayDutyHoursFormatted.collectAsStateWithLifecycle()
     val monthlyDutyHours by viewModel.monthlyDutyHoursFormatted.collectAsStateWithLifecycle()
+    val stationActiveReserveHolder by viewModel.stationActiveReserveHolder.collectAsStateWithLifecycle()
+    val isCurrentOfficerReserveHolder = stationActiveReserveHolder?.officerUid == appUser?.uid
 
-    val isOnDuty = latestShift?.type == "ON_DUTY"
+    val isOnDuty = appUser?.isOnDuty ?: (latestShift?.type == "ON_DUTY")
 
     LazyColumn(
         modifier = Modifier
@@ -125,7 +146,7 @@ fun DashboardScreen(
                     QuickActionShortcut(
                         title = "රාජකාරි",
                         subtitle = "Duty Logs",
-                        icon = Icons.Default.MenuBook,
+                        icon = Icons.AutoMirrored.Filled.MenuBook,
                         color = MaterialTheme.colorScheme.primary,
                         onClick = onNavigateToDuty,
                         modifier = Modifier.weight(1f)
@@ -134,7 +155,7 @@ fun DashboardScreen(
                         title = "ගමන් සටහන්",
                         subtitle = "Running Chart",
                         icon = Icons.Default.DirectionsCar,
-                        color = DutyActiveGreen,
+                        color = PoliceThemeColors.greenText,
                         onClick = onNavigateToRunningChart,
                         modifier = Modifier.weight(1f)
                     )
@@ -142,18 +163,207 @@ fun DashboardScreen(
                         title = "මෙස් ආහාර",
                         subtitle = "Mess Meals",
                         icon = Icons.Default.Restaurant,
-                        color = BadgeGold,
+                        color = PoliceThemeColors.goldText,
                         onClick = onNavigateToMess,
                         modifier = Modifier.weight(1f)
                     )
                     QuickActionShortcut(
-                        title = "නාමාවලිය",
-                        subtitle = "Directory",
+                        title = "සබඳතා",
+                        subtitle = "Station & Dir",
                         icon = Icons.Default.Phone,
-                        color = Color(0xFF0284C7),
+                        color = PoliceThemeColors.blueText,
                         onClick = onNavigateToDirectory,
                         modifier = Modifier.weight(1f)
                     )
+                }
+            }
+        }
+
+        // Emergency GPS SOS & Live Map Quick Actions Row
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Button(
+                    onClick = onOpenSos,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFFDC2626),
+                        contentColor = Color.White
+                    ),
+                    shape = RoundedCornerShape(14.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("dashboard_sos_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Warning,
+                        contentDescription = "Emergency SOS",
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "හදිසි SOS",
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 13.sp,
+                        maxLines = 1
+                    )
+                }
+
+                OutlinedButton(
+                    onClick = onOpenMap,
+                    shape = RoundedCornerShape(14.dp),
+                    border = BorderStroke(1.5.dp, PoliceThemeColors.navyText),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = PoliceThemeColors.navyText
+                    ),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("dashboard_live_map_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.LocationOn,
+                        contentDescription = "Live GPS Map",
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "සජීවී සිතියම",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp,
+                        maxLines = 1
+                    )
+                }
+            }
+        }
+
+        // 1b. Admin Branch Assigned Duty Banner (If Assigned)
+        if (myTodayAssignedDuty != null) {
+            item {
+                val assigned = myTodayAssignedDuty!!
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("assigned_duty_hero_card"),
+                    shape = RoundedCornerShape(18.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
+                    border = BorderStroke(1.5.dp, BadgeGold)
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(34.dp)
+                                        .background(BadgeGold.copy(alpha = 0.2f), CircleShape),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(Icons.Default.Security, contentDescription = null, tint = PoliceThemeColors.navyText, modifier = Modifier.size(18.dp))
+                                }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Column {
+                                    Text(
+                                        text = "පාලන අංශයේ අද දින රාජකාරි පැවරීම",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 13.sp,
+                                        color = PoliceThemeColors.navyText
+                                    )
+                                    Text(
+                                        text = "Admin Branch Duty Assignment",
+                                        fontSize = 10.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = DutyActiveGreen.copy(alpha = 0.15f)
+                            ) {
+                                Text(
+                                    text = "පවරා ඇත",
+                                    color = PoliceThemeColors.greenText,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        Text(
+                            text = assigned.dutyNature,
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "මුරය / වේලාව: ${assigned.shift}",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        if (assigned.remarks.isNotBlank()) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "සටහන්: ${assigned.remarks}",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Button(
+                                onClick = { onOpenDutyDialog("ON_DUTY") },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = DutyActiveGreen,
+                                    contentColor = Color.White
+                                ),
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier.weight(1.3f)
+                            ) {
+                                Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("රාජකාරිය වාර්තා කරන්න", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+
+                            OutlinedButton(
+                                onClick = { isUpcomingScheduleDialogOpen = true },
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(Icons.Default.CalendarMonth, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("ඉදිරි දින (${myDutyAssignments.size})", fontSize = 11.sp)
+                            }
+                        }
+                    }
+                }
+            }
+        } else if (myDutyAssignments.isNotEmpty()) {
+            item {
+                OutlinedButton(
+                    onClick = { isUpcomingScheduleDialogOpen = true },
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, PoliceThemeColors.goldText.copy(alpha = 0.8f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Default.CalendarMonth, contentDescription = null, tint = PoliceThemeColors.goldText, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("පාලන අංශයේ ඉදිරි දින රාජකාරි කාලසටහන (${myDutyAssignments.size}) බලන්න", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = PoliceThemeColors.navyText)
                 }
             }
         }
@@ -163,6 +373,7 @@ fun DashboardScreen(
             DutyStatusHeroCard(
                 latestDuty = latestDuty,
                 isOnDuty = isOnDuty,
+                isCurrentOfficerReserveHolder = isCurrentOfficerReserveHolder,
                 todayDutyHours = todayDutyHours,
                 monthlyDutyHours = monthlyDutyHours,
                 onReportOnDuty = { onOpenDutyDialog("ON_DUTY") },
@@ -224,7 +435,7 @@ fun DashboardScreen(
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Icon(
-                            imageVector = Icons.Default.MenuBook,
+                            imageVector = Icons.AutoMirrored.Filled.MenuBook,
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
                             modifier = Modifier.size(40.dp)
@@ -258,6 +469,143 @@ fun DashboardScreen(
         }
 
         item { Spacer(modifier = Modifier.height(24.dp)) }
+    }
+
+    if (isUpcomingScheduleDialogOpen) {
+        OfficerUpcomingDutiesDialog(
+            assignments = myDutyAssignments,
+            onDismiss = { isUpcomingScheduleDialogOpen = false }
+        )
+    }
+}
+
+@Composable
+private fun OfficerUpcomingDutiesDialog(
+    assignments: List<DutyAssignment>,
+    onDismiss: () -> Unit
+) {
+    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            shape = RoundedCornerShape(18.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.CalendarMonth, contentDescription = null, tint = PoliceThemeColors.navyText, modifier = Modifier.size(20.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "ඉදිරි දින රාජකාරි කාලසටහන",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp,
+                            color = PoliceThemeColors.navyText
+                        )
+                    }
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) {
+                        Icon(Icons.Default.Close, contentDescription = "Close", modifier = Modifier.size(20.dp))
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                if (assignments.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(24.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "පාලන අංශය මගින් පවරා ඇති ඉදිරි රාජකාරි නොමැත.",
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 380.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(assignments) { assign ->
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(12.dp),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                                ),
+                                border = BorderStroke(1.dp, BadgeGold.copy(alpha = 0.5f))
+                            ) {
+                                Column(modifier = Modifier.padding(12.dp)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = "දිනය: ${assign.dateKey}",
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 13.sp,
+                                            color = PoliceThemeColors.navyText
+                                        )
+                                        Surface(
+                                            shape = RoundedCornerShape(6.dp),
+                                            color = DutyActiveGreen.copy(alpha = 0.15f)
+                                        ) {
+                                            Text(
+                                                text = assign.shift,
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = PoliceThemeColors.greenText,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                    }
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = assign.dutyNature,
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    if (assign.remarks.isNotBlank()) {
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        Text(
+                                            text = "සටහන්: ${assign.remarks}",
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Button(
+                    onClick = onDismiss,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Text("වසන්න (Close)")
+                }
+            }
+        }
     }
 }
 
@@ -358,6 +706,7 @@ fun OfficerHeaderCard(
 fun DutyStatusHeroCard(
     latestDuty: DutyRecord?,
     isOnDuty: Boolean,
+    isCurrentOfficerReserveHolder: Boolean = false,
     todayDutyHours: String = "",
     monthlyDutyHours: String = "",
     onReportOnDuty: () -> Unit,
@@ -442,7 +791,7 @@ fun DutyStatusHeroCard(
                             text = "⏱️ අද කාලය: $todayDutyHours",
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
-                            color = DutyActiveGreen
+                            color = PoliceThemeColors.greenText
                         )
                         if (monthlyDutyHours.isNotBlank()) {
                             Text(
@@ -547,15 +896,33 @@ fun DutyStatusHeroCard(
                         Icon(
                             imageVector = Icons.Default.CameraAlt,
                             contentDescription = null,
-                            tint = BadgeGold,
+                            tint = PoliceThemeColors.goldText,
                             modifier = Modifier.size(16.dp)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
                             text = "සිද්ධියේ / ස්ථානයේ ඡායාරූපය (Scene Photo)",
                             fontSize = 12.sp,
-                            color = BadgeGold,
+                            color = PoliceThemeColors.goldText,
                             fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+
+                if (isCurrentOfficerReserveHolder) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = BadgeGold.copy(alpha = 0.16f),
+                        border = BorderStroke(1.dp, PoliceThemeColors.goldText.copy(alpha = 0.45f)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = "🔒 ඔබ දැනට උපසේවා (Station Reserve) රාජකාරියේ සිටී — වෙනත් නිලධාරියෙකු උපසේවා භාර ගන්නා තෙක් Off Duty විය නොහැක.",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = PoliceThemeColors.goldText,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)
                         )
                     }
                 }
@@ -565,7 +932,10 @@ fun DutyStatusHeroCard(
                 // Action 1: Add Extra Duty / Incident during shift (Unlimited!)
                 Button(
                     onClick = onReportExtraDuty,
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB)),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF2563EB),
+                        contentColor = Color.White
+                    ),
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier
                         .fillMaxWidth()
@@ -585,7 +955,10 @@ fun DutyStatusHeroCard(
                 // Action 2: Go Off Duty button
                 Button(
                     onClick = onReportOffDuty,
-                    colors = ButtonDefaults.buttonColors(containerColor = DutyOffOrange),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = DutyOffOrange,
+                        contentColor = Color.White
+                    ),
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier
                         .fillMaxWidth()
@@ -616,7 +989,10 @@ fun DutyStatusHeroCard(
 
                 Button(
                     onClick = onReportOnDuty,
-                    colors = ButtonDefaults.buttonColors(containerColor = DutyActiveGreen),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = DutyActiveGreen,
+                        contentColor = Color.White
+                    ),
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier
                         .fillMaxWidth()
@@ -688,7 +1064,7 @@ fun TodayMessQuickCard(
                         Icon(
                             imageVector = Icons.Default.Restaurant,
                             contentDescription = null,
-                            tint = BadgeGold,
+                            tint = PoliceThemeColors.goldText,
                             modifier = Modifier.size(20.dp)
                         )
                     }
@@ -822,12 +1198,12 @@ fun QuickMealPill(
                 text = label,
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Bold,
-                color = if (isTaken) DutyActiveGreen else MaterialTheme.colorScheme.onSurface
+                color = if (isTaken) PoliceThemeColors.greenText else MaterialTheme.colorScheme.onSurface
             )
             Text(
                 text = if (isTaken) "ලබා ගත්තා" else "නොගත්තා",
                 fontSize = 11.sp,
-                color = if (isTaken) DutyActiveGreen else MaterialTheme.colorScheme.onSurfaceVariant
+                color = if (isTaken) PoliceThemeColors.greenText else MaterialTheme.colorScheme.onSurfaceVariant
             )
 
             Spacer(modifier = Modifier.height(4.dp))

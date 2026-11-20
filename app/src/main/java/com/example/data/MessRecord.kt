@@ -1,12 +1,15 @@
 package com.example.data
 
+import androidx.annotation.Keep
 import androidx.room.Entity
 import androidx.room.Ignore
 import androidx.room.PrimaryKey
 import com.google.firebase.Timestamp
 import com.google.firebase.firestore.IgnoreExtraProperties
+import com.google.firebase.firestore.PropertyName
 import com.google.firebase.firestore.ServerTimestamp
 
+@Keep
 @IgnoreExtraProperties
 @Entity(tableName = "mess_records")
 data class MessRecord(
@@ -15,6 +18,8 @@ data class MessRecord(
     val oicStationCode: String = "",
     val date: String = "", // yyyy-MM-dd
     val mealType: String = "", // "BREAKFAST", "LUNCH", "DINNER"
+    @get:PropertyName("isTaken")
+    @field:PropertyName("isTaken")
     val isTaken: Boolean = true,
     val mealNotes: String = "",
     val price: Double = 0.0,

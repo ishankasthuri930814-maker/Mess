@@ -67,6 +67,8 @@ import com.example.data.MessRecord
 import com.example.ui.theme.BadgeGold
 import com.example.ui.theme.DutyActiveGreen
 import com.example.ui.theme.DutyOffOrange
+import com.example.ui.theme.PoliceThemeColors
+import com.example.ui.theme.isDark
 import com.example.util.DateTimeUtils
 import java.io.File
 import java.text.SimpleDateFormat
@@ -126,7 +128,7 @@ fun MessScreen(
                 title = "උදේ ආහාරය (Breakfast)",
                 mealType = "BREAKFAST",
                 icon = Icons.Default.WbSunny,
-                iconColor = BadgeGold,
+                iconColor = PoliceThemeColors.goldText,
                 record = breakfastRecord,
                 defaultPrice = bDefaultPrice,
                 onToggle = { isTaken -> viewModel.toggleMealTaken("BREAKFAST", isTaken) },
@@ -142,7 +144,7 @@ fun MessScreen(
                 title = "දිවා ආහාරය (Lunch)",
                 mealType = "LUNCH",
                 icon = Icons.Default.LightMode,
-                iconColor = Color(0xFFF59E0B),
+                iconColor = PoliceThemeColors.orangeText,
                 record = lunchRecord,
                 defaultPrice = lDefaultPrice,
                 onToggle = { isTaken -> viewModel.toggleMealTaken("LUNCH", isTaken) },
@@ -154,11 +156,12 @@ fun MessScreen(
 
         // 4. Dinner Card (රාත්‍රී ආහාරය)
         item {
+            val dinnerColor = if (MaterialTheme.colorScheme.isDark) Color(0xFFA5B4FC) else Color(0xFF4F46E5)
             MealCard(
                 title = "රාත්‍රී ආහාරය (Dinner)",
                 mealType = "DINNER",
                 icon = Icons.Default.Bedtime,
-                iconColor = Color(0xFF6366F1),
+                iconColor = dinnerColor,
                 record = dinnerRecord,
                 defaultPrice = dDefaultPrice,
                 onToggle = { isTaken -> viewModel.toggleMealTaken("DINNER", isTaken) },
@@ -361,7 +364,7 @@ fun MealCard(
                         Text(
                             text = if (isTaken) "ලබා ගත්තා" else "ලබා නොගත්තා",
                             fontSize = 12.sp,
-                            color = if (isTaken) DutyActiveGreen else MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = if (isTaken) PoliceThemeColors.greenText else MaterialTheme.colorScheme.onSurfaceVariant,
                             fontWeight = if (isTaken) FontWeight.SemiBold else FontWeight.Normal
                         )
                         if (isTaken) {
@@ -516,7 +519,7 @@ fun MonthlyMessSummaryCard(
                     Icon(
                         imageVector = Icons.Default.Payments,
                         contentDescription = null,
-                        tint = BadgeGold,
+                        tint = PoliceThemeColors.goldText,
                         modifier = Modifier.size(24.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
@@ -556,13 +559,13 @@ fun MonthlyMessSummaryCard(
                 CostSummaryBox(
                     title = "මෙම මාසය",
                     amount = summary.monthlyTotalCost,
-                    color = Color(0xFF10B981),
+                    color = PoliceThemeColors.greenText,
                     modifier = Modifier.weight(1f)
                 )
                 CostSummaryBox(
                     title = "මෙතෙක් සමස්ත",
                     amount = summary.allTimeTotalCost,
-                    color = BadgeGold,
+                    color = PoliceThemeColors.goldText,
                     modifier = Modifier.weight(1f)
                 )
             }
@@ -570,6 +573,7 @@ fun MonthlyMessSummaryCard(
             Spacer(modifier = Modifier.height(14.dp))
 
             // 3 Meal Counts & Costs Breakdown Row
+            val dinnerIconColor = if (MaterialTheme.colorScheme.isDark) Color(0xFFA5B4FC) else Color(0xFF4F46E5)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -579,7 +583,7 @@ fun MonthlyMessSummaryCard(
                     count = summary.breakfastCount,
                     cost = summary.breakfastCost,
                     icon = Icons.Default.WbSunny,
-                    color = BadgeGold,
+                    color = PoliceThemeColors.goldText,
                     modifier = Modifier.weight(1f)
                 )
                 MealCountAndCostBox(
@@ -587,7 +591,7 @@ fun MonthlyMessSummaryCard(
                     count = summary.lunchCount,
                     cost = summary.lunchCost,
                     icon = Icons.Default.LightMode,
-                    color = Color(0xFFF59E0B),
+                    color = PoliceThemeColors.orangeText,
                     modifier = Modifier.weight(1f)
                 )
                 MealCountAndCostBox(
@@ -595,7 +599,7 @@ fun MonthlyMessSummaryCard(
                     count = summary.dinnerCount,
                     cost = summary.dinnerCost,
                     icon = Icons.Default.Bedtime,
-                    color = Color(0xFF6366F1),
+                    color = dinnerIconColor,
                     modifier = Modifier.weight(1f)
                 )
             }
@@ -745,7 +749,7 @@ fun MonthlyMealListItem(
                 Icon(
                     imageVector = if (record.isTaken) Icons.Default.Check else Icons.Default.Close,
                     contentDescription = null,
-                    tint = if (record.isTaken) DutyActiveGreen else DutyOffOrange,
+                    tint = if (record.isTaken) PoliceThemeColors.greenText else PoliceThemeColors.orangeText,
                     modifier = Modifier.size(16.dp)
                 )
             }
@@ -773,7 +777,7 @@ fun MonthlyMealListItem(
                         Text(
                             text = "නොගත්තා",
                             fontSize = 11.sp,
-                            color = DutyOffOrange
+                            color = PoliceThemeColors.orangeText
                         )
                     }
                     if (record.mealNotes.isNotBlank()) {

@@ -23,12 +23,12 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.AccessTime
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Shield
@@ -54,9 +54,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil.compose.rememberAsyncImagePainter
 import com.example.data.DutyRecord
-import com.example.ui.theme.BadgeGold
-import com.example.ui.theme.DutyActiveGreen
-import com.example.ui.theme.DutyOffOrange
+import com.example.ui.theme.PoliceThemeColors
 import com.example.util.DateTimeUtils
 import java.io.File
 
@@ -104,13 +102,13 @@ fun DayDutySummaryDialog(
                         Box(
                             modifier = Modifier
                                 .size(40.dp)
-                                .background(BadgeGold.copy(alpha = 0.2f), CircleShape),
+                                .background(PoliceThemeColors.goldText.copy(alpha = 0.2f), CircleShape),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
                                 imageVector = Icons.Default.CalendarMonth,
                                 contentDescription = null,
-                                tint = BadgeGold,
+                                tint = PoliceThemeColors.goldText,
                                 modifier = Modifier.size(22.dp)
                             )
                         }
@@ -137,7 +135,7 @@ fun DayDutySummaryDialog(
                     // Total Duty Hours Banner
                     Surface(
                         shape = RoundedCornerShape(12.dp),
-                        color = DutyActiveGreen.copy(alpha = 0.12f),
+                        color = PoliceThemeColors.greenText.copy(alpha = 0.12f),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Row(
@@ -151,7 +149,7 @@ fun DayDutySummaryDialog(
                                 Icon(
                                     imageVector = Icons.Default.AccessTime,
                                     contentDescription = null,
-                                    tint = DutyActiveGreen,
+                                    tint = PoliceThemeColors.greenText,
                                     modifier = Modifier.size(20.dp)
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
@@ -165,7 +163,7 @@ fun DayDutySummaryDialog(
                                         text = summary.totalHoursFormatted,
                                         fontSize = 14.sp,
                                         fontWeight = FontWeight.Bold,
-                                        color = DutyActiveGreen
+                                        color = PoliceThemeColors.greenText
                                     )
                                 }
                             }
@@ -199,11 +197,11 @@ fun DayDutySummaryDialog(
                     }
 
                     // 1. Primary On Duty Record
-                    SectionTitle(title = "1. රාජකාරිය වාර්තා කිරීම (On Duty)", icon = Icons.Default.Security, color = DutyActiveGreen)
+                    SectionTitle(title = "1. රාජකාරිය වාර්තා කිරීම (On Duty)", icon = Icons.Default.Security, color = PoliceThemeColors.greenText)
                     if (summary.onDutyRecord != null) {
                         SingleDutyDetailCard(
                             record = summary.onDutyRecord,
-                            badgeColor = DutyActiveGreen,
+                            badgeColor = PoliceThemeColors.greenText,
                             onEditRecord = onEditRecord,
                             onViewPhoto = onViewPhoto
                         )
@@ -212,11 +210,11 @@ fun DayDutySummaryDialog(
                     }
 
                     // 2. Primary Off Duty Record
-                    SectionTitle(title = "2. බැහැරවීම (Off Duty)", icon = Icons.Default.MenuBook, color = DutyOffOrange)
+                    SectionTitle(title = "2. බැහැරවීම (Off Duty)", icon = Icons.AutoMirrored.Filled.MenuBook, color = PoliceThemeColors.orangeText)
                     if (summary.offDutyRecord != null) {
                         SingleDutyDetailCard(
                             record = summary.offDutyRecord,
-                            badgeColor = DutyOffOrange,
+                            badgeColor = PoliceThemeColors.orangeText,
                             onEditRecord = onEditRecord,
                             onViewPhoto = onViewPhoto
                         )
@@ -228,13 +226,13 @@ fun DayDutySummaryDialog(
                     SectionTitle(
                         title = "3. අමතර රාජකාරි සහ සිද්ධි (${summary.extraDutyRecords.size})",
                         icon = Icons.Default.Shield,
-                        color = Color(0xFF2563EB)
+                        color = PoliceThemeColors.blueText
                     )
                     if (summary.extraDutyRecords.isNotEmpty()) {
                         summary.extraDutyRecords.forEachIndexed { index, extraRec ->
                             SingleDutyDetailCard(
                                 record = extraRec,
-                                badgeColor = Color(0xFF2563EB),
+                                badgeColor = PoliceThemeColors.blueText,
                                 labelPrefix = "අමතර රාජකාරිය #${index + 1}: ",
                                 onEditRecord = onEditRecord,
                                 onViewPhoto = onViewPhoto

@@ -55,9 +55,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil.compose.rememberAsyncImagePainter
 import com.example.data.MessRecord
-import com.example.ui.theme.BadgeGold
-import com.example.ui.theme.DutyActiveGreen
-import com.example.ui.theme.DutyOffOrange
+import com.example.ui.theme.PoliceThemeColors
 import java.io.File
 
 @Composable
@@ -105,13 +103,13 @@ fun DayMessSummaryDialog(
                         Box(
                             modifier = Modifier
                                 .size(40.dp)
-                                .background(BadgeGold.copy(alpha = 0.2f), CircleShape),
+                                .background(PoliceThemeColors.goldText.copy(alpha = 0.2f), CircleShape),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Restaurant,
                                 contentDescription = null,
-                                tint = BadgeGold,
+                                tint = PoliceThemeColors.goldText,
                                 modifier = Modifier.size(22.dp)
                             )
                         }
@@ -176,7 +174,7 @@ fun DayMessSummaryDialog(
                         title = "උදේ ආහාරය (Breakfast)",
                         mealType = "BREAKFAST",
                         icon = Icons.Default.WbSunny,
-                        iconColor = BadgeGold,
+                        iconColor = PoliceThemeColors.goldText,
                         record = summary.breakfast,
                         onEdit = { onEditMeal("BREAKFAST", summary.breakfast) },
                         onViewPhoto = onViewPhoto
@@ -187,7 +185,7 @@ fun DayMessSummaryDialog(
                         title = "දිවා ආහාරය (Lunch)",
                         mealType = "LUNCH",
                         icon = Icons.Default.LightMode,
-                        iconColor = Color(0xFFF59E0B),
+                        iconColor = PoliceThemeColors.orangeText,
                         record = summary.lunch,
                         onEdit = { onEditMeal("LUNCH", summary.lunch) },
                         onViewPhoto = onViewPhoto
@@ -198,7 +196,7 @@ fun DayMessSummaryDialog(
                         title = "රාත්‍රී ආහාරය (Dinner)",
                         mealType = "DINNER",
                         icon = Icons.Default.Bedtime,
-                        iconColor = Color(0xFF6366F1),
+                        iconColor = PoliceThemeColors.blueText,
                         record = summary.dinner,
                         onEdit = { onEditMeal("DINNER", summary.dinner) },
                         onViewPhoto = onViewPhoto
@@ -267,7 +265,7 @@ private fun SingleMealSummaryCard(
 
                 Surface(
                     shape = RoundedCornerShape(10.dp),
-                    color = if (record?.isTaken == true) DutyActiveGreen.copy(alpha = 0.15f) else DutyOffOrange.copy(alpha = 0.15f)
+                    color = if (record?.isTaken == true) PoliceThemeColors.greenText.copy(alpha = 0.15f) else PoliceThemeColors.orangeText.copy(alpha = 0.15f)
                 ) {
                     Row(
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
@@ -276,7 +274,7 @@ private fun SingleMealSummaryCard(
                         Icon(
                             imageVector = if (record?.isTaken == true) Icons.Default.Check else Icons.Default.Close,
                             contentDescription = null,
-                            tint = if (record?.isTaken == true) DutyActiveGreen else DutyOffOrange,
+                            tint = if (record?.isTaken == true) PoliceThemeColors.greenText else PoliceThemeColors.orangeText,
                             modifier = Modifier.size(14.dp)
                         )
                         Spacer(modifier = Modifier.width(4.dp))
@@ -284,7 +282,7 @@ private fun SingleMealSummaryCard(
                             text = if (record?.isTaken == true) "ලබා ගත්තා" else "ලබා නොගත්තා",
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
-                            color = if (record?.isTaken == true) DutyActiveGreen else DutyOffOrange
+                            color = if (record?.isTaken == true) PoliceThemeColors.greenText else PoliceThemeColors.orangeText
                         )
                     }
                 }

@@ -10,8 +10,16 @@
             "role": "string",
             "status": "string",
             "oicEmail": "string",
+            "oicStationCode": "string",
+            "stationName": "string",
+            "badgeNumber": "string",
+            "rank": "string",
+            "phoneNumber": "string",
+            "address": "string",
+            "fcmToken": "string",
             "isOnDuty": "boolean",
             "lastLocation": "map",
+            "lastOffDutyLocation": "map",
             "updatedAt": "timestamp"
           }
         }
@@ -23,6 +31,7 @@
           "fields": {
             "officerId": "string",
             "oicEmail": "string",
+            "oicStationCode": "string",
             "type": "string",
             "timestamp": "number",
             "ibPage": "string",
@@ -43,6 +52,7 @@
           "fields": {
             "officerId": "string",
             "oicEmail": "string",
+            "oicStationCode": "string",
             "date": "string",
             "mealType": "string",
             "isTaken": "boolean",
@@ -50,6 +60,131 @@
             "mealNotes": "string",
             "photoPath": "string",
             "timestamp": "number",
+            "createdAt": "timestamp"
+          }
+        }
+      }
+    },
+    "running_chart_records": {
+      "documents": {
+        "{recordId}": {
+          "fields": {
+            "officerId": "string",
+            "oicStationCode": "string",
+            "date": "string",
+            "vehicleNumber": "string",
+            "startMeter": "number",
+            "endMeter": "number",
+            "distanceKm": "number",
+            "kmPerLiter": "number",
+            "startFuel": "number",
+            "addedFuel": "number",
+            "consumedFuel": "number",
+            "remainingFuel": "number",
+            "notes": "string",
+            "timestamp": "number",
+            "createdAt": "timestamp"
+          }
+        }
+      }
+    },
+    "team_duties": {
+      "documents": {
+        "{sessionId}": {
+          "fields": {
+            "sessionId": "string",
+            "joinCode": "string",
+            "leaderUid": "string",
+            "leaderName": "string",
+            "leaderBadge": "string",
+            "leaderRank": "string",
+            "oicStationCode": "string",
+            "dutyNature": "string",
+            "ibPage": "string",
+            "ibParagraph": "string",
+            "remarks": "string",
+            "status": "string",
+            "startedAtMs": "number",
+            "endedAtMs": "number",
+            "createdAt": "timestamp"
+          },
+          "subcollections": {
+            "members": {
+              "documents": {
+                "{memberUid}": {
+                  "fields": {
+                    "uid": "string",
+                    "displayName": "string",
+                    "rank": "string",
+                    "badgeNumber": "string",
+                    "phoneNumber": "string",
+                    "roleInTeam": "string",
+                    "status": "string",
+                    "joinedAtMs": "number"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "notifications": {
+      "documents": {
+        "{notificationId}": {
+          "fields": {
+            "title": "string",
+            "message": "string",
+            "senderUid": "string",
+            "senderName": "string",
+            "senderRole": "string",
+            "targetType": "string",
+            "targetStationCode": "string",
+            "targetUid": "string",
+            "priority": "string",
+            "createdAtMs": "number",
+            "createdAt": "timestamp"
+          }
+        }
+      }
+    },
+    "location_history": {
+      "documents": {
+        "{entryId}": {
+          "fields": {
+            "officerId": "string",
+            "officerName": "string",
+            "oicStationCode": "string",
+            "dateKey": "string",
+            "dayStationKey": "string",
+            "officerDayKey": "string",
+            "lat": "number",
+            "lng": "number",
+            "accuracy": "number",
+            "dutyType": "string",
+            "timestamp": "number",
+            "createdAt": "timestamp"
+          }
+        }
+      }
+    },
+    "emergency_alerts": {
+      "documents": {
+        "{alertId}": {
+          "fields": {
+            "senderUid": "string",
+            "senderName": "string",
+            "senderRank": "string",
+            "senderBadge": "string",
+            "senderRole": "string",
+            "senderPhone": "string",
+            "oicStationCode": "string",
+            "message": "string",
+            "lat": "number",
+            "lng": "number",
+            "radiusKm": "number",
+            "status": "string",
+            "createdAtMs": "number",
             "createdAt": "timestamp"
           }
         }

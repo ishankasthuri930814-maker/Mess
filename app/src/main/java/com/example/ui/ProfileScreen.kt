@@ -23,17 +23,24 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.Badge
 import androidx.compose.material.icons.filled.Compress
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Done
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.LocationOn
-import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Restaurant
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenuItem
@@ -42,10 +49,12 @@ import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -66,20 +75,25 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.OfficerProfile
+import androidx.compose.ui.graphics.luminance
 import com.example.ui.theme.BadgeGold
+import com.example.ui.theme.BadgeGoldBright
 import com.example.ui.theme.DutyActiveGreen
 import com.example.ui.theme.PoliceNavyDark
 import com.example.ui.theme.PoliceNavyPrimary
 import com.example.ui.theme.PoliceSlate
+import com.example.ui.theme.PoliceThemeColors
 import com.example.util.DateTimeUtils
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ProfileScreen(
-    viewModel: PoliceViewModel
+    viewModel: PoliceViewModel,
+    isMandatoryCompletionMode: Boolean = false
 ) {
     val context = LocalContext.current
     val currentProfile by viewModel.officerProfile.collectAsStateWithLifecycle()
+    val appUser by viewModel.appUser.collectAsStateWithLifecycle()
     val storageStats by viewModel.storageStats.collectAsStateWithLifecycle()
     val dutyRecords by viewModel.filteredDutyRecords.collectAsStateWithLifecycle()
     val monthlySummary by viewModel.monthlySummary.collectAsStateWithLifecycle()
@@ -88,7 +102,13 @@ fun ProfileScreen(
     var rank by remember { mutableStateOf("Police Constable (PC)") }
     var badgeNumber by remember { mutableStateOf("") }
     var station by remember { mutableStateOf("") }
+    var phoneNumber by remember { mutableStateOf("") }
+    var address by remember { mutableStateOf("") }
     var rankDropdownExpanded by remember { mutableStateOf(false) }
+
+    var isTransferDialogOpen by remember { mutableStateOf(false) }
+    var newStationCodeInput by remember { mutableStateOf("") }
+    var isLogoutConfirmOpen by remember { mutableStateOf(false) }
 
     val rankOptions = listOf(
         "Police Constable (PC)",
@@ -102,13 +122,15 @@ fun ProfileScreen(
         "Superintendent of Police (SP)"
     )
 
-    LaunchedEffect(currentProfile) {
-        currentProfile?.let {
-            name = it.name
-            rank = it.rank.ifBlank { "Police Constable (PC)" }
-            badgeNumber = it.badgeNumber
-            station = it.station
-        }
+    LaunchedEffect(currentProfile, appUser) {
+        val u = appUser
+        val p = currentProfile
+        name = (u?.displayName?.takeIf { it.isNotBlank() } ?: p?.name).orEmpty()
+        rank = (u?.rank?.takeIf { it.isNotBlank() } ?: p?.rank?.takeIf { it.isNotBlank() }) ?: "Police Constable (PC)"
+        badgeNumber = (u?.badgeNumber?.takeIf { it.isNotBlank() } ?: p?.badgeNumber).orEmpty()
+        station = (u?.stationName?.takeIf { it.isNotBlank() } ?: p?.station?.takeIf { it.isNotBlank() } ?: u?.oicStationCode).orEmpty()
+        phoneNumber = (u?.phoneNumber?.takeIf { it.isNotBlank() } ?: p?.phoneNumber).orEmpty()
+        address = (u?.address?.takeIf { it.isNotBlank() } ?: p?.address).orEmpty()
     }
 
     Column(
@@ -120,12 +142,36 @@ fun ProfileScreen(
     ) {
         Spacer(modifier = Modifier.height(8.dp))
 
+        if (isMandatoryCompletionMode) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
+            ) {
+                Row(
+                    modifier = Modifier.padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.error)
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text(
+                        text = "ප්‍රධාන පුවරුවට පිවිසීමට පෙර ඔබගේ පුද්ගලික දුරකථන අංකය, පදිංචි ලිපිනය සහ සම්පූර්ණ නිලධාරී තොරතුරු අනිවාර්යයෙන් සුරැකිය යුතුය.",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        lineHeight = 17.sp
+                    )
+                }
+            }
+        }
+
         // 1. Virtual Police Identification Card
         PoliceIdBadgeCard(
             name = name,
             rank = rank,
             badgeNumber = badgeNumber,
-            station = station
+            station = station,
+            phoneNumber = phoneNumber
         )
 
         // 2. Registration & Edit Form Card
@@ -190,7 +236,7 @@ fun ProfileScreen(
                         trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = rankDropdownExpanded) },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .menuAnchor()
+                            .menuAnchor(MenuAnchorType.PrimaryNotEditable, enabled = true)
                             .testTag("officer_rank_input")
                     )
 
@@ -234,7 +280,7 @@ fun ProfileScreen(
                 OutlinedTextField(
                     value = station,
                     onValueChange = { station = it },
-                    label = { Text("පොලිස් ස්ථානය (Police Station / Division)") },
+                    label = { Text("පොලිස් ස්ථානය * (Police Station / Division)") },
                     placeholder = { Text("e.g. Colombo Central / Kandy") },
                     leadingIcon = {
                         Icon(Icons.Default.LocationOn, contentDescription = null)
@@ -246,15 +292,64 @@ fun ProfileScreen(
                         .testTag("officer_station_input")
                 )
 
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Mandatory Personal Phone Number
+                OutlinedTextField(
+                    value = phoneNumber,
+                    onValueChange = { phoneNumber = it },
+                    label = { Text("පුද්ගලික දුරකථන අංකය * (Personal Phone)") },
+                    placeholder = { Text("0771234567") },
+                    leadingIcon = {
+                        Icon(Icons.Default.Phone, contentDescription = null)
+                    },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                    isError = phoneNumber.isNotBlank() && phoneNumber.filter { it.isDigit() }.length < 9,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("officer_phone_input")
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Mandatory Personal Address
+                OutlinedTextField(
+                    value = address,
+                    onValueChange = { address = it },
+                    label = { Text("පුද්ගලික ලිපිනය * (Personal Address)") },
+                    placeholder = { Text("ඔබගේ පදිංචි ලිපිනය ඇතුළත් කරන්න") },
+                    leadingIcon = {
+                        Icon(Icons.Default.Home, contentDescription = null)
+                    },
+                    minLines = 2,
+                    maxLines = 3,
+                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("officer_address_input")
+                )
+
                 Spacer(modifier = Modifier.height(20.dp))
 
                 Button(
                     onClick = {
-                        if (name.isBlank() || badgeNumber.isBlank()) {
-                            Toast.makeText(context, "කරුණාකර නම සහ නිල අංකය ඇතුළත් කරන්න", Toast.LENGTH_SHORT).show()
+                        if (name.isBlank() || badgeNumber.isBlank() || station.isBlank() || phoneNumber.filter { it.isDigit() }.length < 9 || address.isBlank()) {
+                            Toast.makeText(
+                                context,
+                                "කරුණාකර නම, නිල අංකය, ස්ථානය, දුරකථන අංකය සහ ලිපිනය සියල්ල නිවැරදිව ඇතුළත් කරන්න",
+                                Toast.LENGTH_LONG
+                            ).show()
                             return@Button
                         }
-                        viewModel.saveOfficerProfile(name, rank, badgeNumber, station)
+                        viewModel.saveOfficerProfile(
+                            name = name,
+                            rank = rank,
+                            badgeNumber = badgeNumber,
+                            station = station,
+                            phoneNumber = phoneNumber,
+                            address = address
+                        )
                     },
                     modifier = Modifier
                         .fillMaxWidth()
@@ -266,6 +361,177 @@ fun ProfileScreen(
                     Text("තොරතුරු සුරකින්න (Save Profile)", fontWeight = FontWeight.Bold)
                 }
             }
+        }
+
+        // 2.5 OIC & Station Transfer Card
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(42.dp)
+                            .background(PoliceThemeColors.navyText.copy(alpha = 0.14f), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.SwapHoriz,
+                            contentDescription = null,
+                            tint = PoliceThemeColors.navyText,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "ස්ථාන මාරුවීම් (Station Transfer)",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "නව OIC කෙනෙකු යටතට මාරුවීම",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "වත්මන් OIC කේතය:",
+                                fontSize = 13.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                text = appUser?.oicStationCode?.ifBlank { "නොමැත" } ?: "නොමැත",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = PoliceThemeColors.navyText
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "අනුමැති තත්ත්වය:",
+                                fontSize = 13.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            val isApproved = appUser?.status == "APPROVED"
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = if (isApproved) DutyActiveGreen.copy(alpha = 0.15f) else BadgeGold.copy(alpha = 0.2f)
+                            ) {
+                                Text(
+                                    text = if (isApproved) "අනුමතයි (Approved)" else "අනුමැතිය අපේක්ෂිතයි",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isApproved) PoliceThemeColors.greenText else PoliceThemeColors.goldText,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                OutlinedButton(
+                    onClick = { isTransferDialogOpen = true },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(Icons.Default.SwapHoriz, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("නව OIC වෙත මාරු වන්න (Transfer to New OIC)")
+                }
+            }
+        }
+
+        if (isTransferDialogOpen) {
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { isTransferDialogOpen = false },
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.SwapHoriz, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("ස්ථාන මාරුවීමක් සටහන් කිරීම", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    }
+                },
+                text = {
+                    Column {
+                        Text(
+                            text = "ඔබ වෙනත් පොලිස් ස්ථානයකට හෝ වෙනත් OICවරයෙකු යටතට මාරුවී ඇත්නම්, ඔබගේ නව ස්ථානාධිපති ලබාදුන් OIC කේතය (Station Code) මෙහි ඇතුළත් කරන්න.",
+                            fontSize = 13.sp,
+                            lineHeight = 18.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(14.dp))
+                        OutlinedTextField(
+                            value = newStationCodeInput,
+                            onValueChange = { newStationCodeInput = it.uppercase() },
+                            label = { Text("නව OIC කේතය (New OIC Code)") },
+                            placeholder = { Text("e.g. OIC-KND-4821") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "මාරුවීමෙන් පසු ඔබගේ නව OIC වෙත අනුමැතිය සඳහා ඉල්ලීම යොමු කෙරේ.",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            if (newStationCodeInput.isNotBlank()) {
+                                viewModel.transferOfficerToNewOic(newStationCodeInput)
+                                isTransferDialogOpen = false
+                                newStationCodeInput = ""
+                            }
+                        },
+                        enabled = newStationCodeInput.isNotBlank()
+                    ) {
+                        Text("මාරු වන්න (Confirm)")
+                    }
+                },
+                dismissButton = {
+                    androidx.compose.material3.TextButton(onClick = { isTransferDialogOpen = false }) {
+                        Text("අවලංගු කරන්න")
+                    }
+                }
+            )
         }
 
         // 3. Overall Statistics & Compression Card
@@ -295,7 +561,7 @@ fun ProfileScreen(
                     StatBox(
                         title = "රාජකාරි සටහන්",
                         value = "${dutyRecords.size}",
-                        icon = Icons.Default.MenuBook,
+                        icon = Icons.AutoMirrored.Filled.MenuBook,
                         color = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.weight(1f)
                     )
@@ -303,7 +569,7 @@ fun ProfileScreen(
                         title = "මෙස් ආහාර",
                         value = "${monthlySummary.totalMeals}",
                         icon = Icons.Default.Restaurant,
-                        color = BadgeGold,
+                        color = PoliceThemeColors.goldText,
                         modifier = Modifier.weight(1f)
                     )
                 }
@@ -325,7 +591,7 @@ fun ProfileScreen(
                         Icon(
                             imageVector = Icons.Default.Compress,
                             contentDescription = null,
-                            tint = DutyActiveGreen,
+                            tint = PoliceThemeColors.greenText,
                             modifier = Modifier.size(24.dp)
                         )
                         Spacer(modifier = Modifier.width(12.dp))
@@ -339,7 +605,7 @@ fun ProfileScreen(
                                 text = "ස්වයංක්‍රීය සම්පීඩනයෙන් ඉතිරි වූ ඉඩ: $savedStr",
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = DutyActiveGreen
+                                color = PoliceThemeColors.greenText
                             )
                             Text(
                                 text = "ඡායාරූප ${storageStats.totalPhotos} ක ප්‍රමාණය ස්වයංක්‍රීයව අඩු කර සුරැකිණි",
@@ -377,6 +643,49 @@ fun ProfileScreen(
             Text("සාරාංශ වාර්තාව කොපි කරන්න (Copy Summary)")
         }
 
+        // 5. Explicit Sign Out Button (session stays saved until tapped)
+        OutlinedButton(
+            onClick = { isLogoutConfirmOpen = true },
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("sign_out_btn"),
+            shape = RoundedCornerShape(12.dp),
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
+        ) {
+            Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(modifier = Modifier.width(8.dp))
+            Text("ගිණුමෙන් ඉවත් වන්න (Sign Out)")
+        }
+
+        if (isLogoutConfirmOpen) {
+            AlertDialog(
+                onDismissRequest = { isLogoutConfirmOpen = false },
+                title = { Text("ගිණුමෙන් ඉවත් වන්නද?", fontWeight = FontWeight.Bold) },
+                text = {
+                    Text("ඔබ Sign Out වන තුරු ඔබගේ ගිණුම ස්වයංක්‍රීයව සුරැකී පවතී. නැවත වෙනත් ගිණුමකින් පිවිසීමට අවශ්‍ය නම් පමණක් ඉවත් වන්න.")
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            isLogoutConfirmOpen = false
+                            viewModel.logout()
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.error,
+                            contentColor = MaterialTheme.colorScheme.onError
+                        )
+                    ) {
+                        Text("ඉවත් වන්න (Sign Out)")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { isLogoutConfirmOpen = false }) {
+                        Text("රැඳී සිටින්න")
+                    }
+                }
+            )
+        }
+
         Spacer(modifier = Modifier.height(24.dp))
     }
 }
@@ -386,7 +695,8 @@ fun PoliceIdBadgeCard(
     name: String,
     rank: String,
     badgeNumber: String,
-    station: String
+    station: String,
+    phoneNumber: String = ""
 ) {
     Card(
         modifier = Modifier
@@ -435,14 +745,14 @@ fun PoliceIdBadgeCard(
                         Column {
                             Text(
                                 text = "SRI LANKA POLICE",
-                                color = BadgeGold,
+                                color = BadgeGoldBright,
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.ExtraBold,
                                 letterSpacing = 1.sp
                             )
                             Text(
                                 text = "ශ්‍රී ලංකා පොලීසිය",
-                                color = Color.White.copy(alpha = 0.8f),
+                                color = Color.White.copy(alpha = 0.85f),
                                 fontSize = 10.sp
                             )
                         }
@@ -477,14 +787,14 @@ fun PoliceIdBadgeCard(
                 // Rank
                 Text(
                     text = rank,
-                    color = BadgeGold,
+                    color = BadgeGoldBright,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.SemiBold
                 )
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                // Station
+                // Station & Phone
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
                         imageVector = Icons.Default.LocationOn,
@@ -498,6 +808,24 @@ fun PoliceIdBadgeCard(
                         color = Color.White.copy(alpha = 0.85f),
                         fontSize = 13.sp
                     )
+                }
+
+                if (phoneNumber.isNotBlank()) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.Phone,
+                            contentDescription = null,
+                            tint = Color.White.copy(alpha = 0.7f),
+                            modifier = Modifier.size(15.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = phoneNumber,
+                            color = Color.White.copy(alpha = 0.85f),
+                            fontSize = 12.sp
+                        )
+                    }
                 }
             }
         }
@@ -521,13 +849,14 @@ fun StatBox(
             modifier = Modifier.padding(14.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            val iconTint = if (color.luminance() > 0.45f) PoliceNavyDark else Color.White
             Box(
                 modifier = Modifier
                     .size(36.dp)
                     .background(color, CircleShape),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(imageVector = icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
+                Icon(imageVector = icon, contentDescription = null, tint = iconTint, modifier = Modifier.size(18.dp))
             }
             Spacer(modifier = Modifier.width(10.dp))
             Column {

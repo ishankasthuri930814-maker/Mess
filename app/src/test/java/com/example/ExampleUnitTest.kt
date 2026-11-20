@@ -5,6 +5,7 @@ import com.example.data.MessRecord
 import com.example.data.OfficerProfile
 import com.example.data.PoliceContact
 import com.example.data.RunningChartRecord
+import com.example.ui.resolveLoginEmail
 import com.example.util.DateTimeUtils
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -128,5 +129,12 @@ class ExampleUnitTest {
   fun verifyDateTimeUtilsFormatting() {
     val durationText = DateTimeUtils.formatDuration(3600000L * 2 + 60000L * 15)
     assertEquals("2h 15m", durationText)
+  }
+
+  @Test
+  fun verifyResolveLoginEmail() {
+    assertEquals("oic1@police.lk", resolveLoginEmail(" OIC1 "))
+    assertEquals("user@gmail.com", resolveLoginEmail("User@Gmail.com"))
+    assertEquals("", resolveLoginEmail("   "))
   }
 }

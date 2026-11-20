@@ -25,6 +25,7 @@ import com.example.ui.theme.BadgeGold
 import com.example.ui.theme.DutyOffOrange
 import com.example.ui.theme.PoliceNavyDark
 import com.example.ui.theme.PoliceNavyPrimary
+import com.example.ui.theme.PoliceThemeColors
 
 @Composable
 fun PendingApprovalScreen(
@@ -62,7 +63,7 @@ fun PendingApprovalScreen(
                         Icon(
                             imageVector = Icons.Default.HourglassTop,
                             contentDescription = null,
-                            tint = DutyOffOrange,
+                            tint = PoliceThemeColors.orangeText,
                             modifier = Modifier.size(42.dp)
                         )
                     }
@@ -79,7 +80,7 @@ fun PendingApprovalScreen(
                     Text(
                         text = "Waiting for OIC Approval",
                         fontSize = 13.sp,
-                        color = DutyOffOrange,
+                        color = PoliceThemeColors.orangeText,
                         fontWeight = FontWeight.SemiBold
                     )
 
@@ -87,14 +88,15 @@ fun PendingApprovalScreen(
 
                     Surface(
                         shape = RoundedCornerShape(12.dp),
-                        color = PoliceNavyPrimary.copy(alpha = 0.08f),
+                        color = PoliceThemeColors.navyText.copy(alpha = 0.1f),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Column(modifier = Modifier.padding(14.dp)) {
                             Text(
                                 text = "නිලධාරියා: ${appUser?.displayName ?: ""}",
                                 fontWeight = FontWeight.Bold,
-                                fontSize = 14.sp
+                                fontSize = 14.sp,
+                                color = MaterialTheme.colorScheme.onSurface
                             )
                             if (appUser?.badgeNumber?.isNotBlank() == true) {
                                 Text(
@@ -107,7 +109,7 @@ fun PendingApprovalScreen(
                                 text = "OIC කේතය: ${appUser?.oicStationCode ?: "N/A"}",
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.SemiBold,
-                                color = PoliceNavyPrimary
+                                color = PoliceThemeColors.navyText
                             )
                         }
                     }

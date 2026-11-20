@@ -36,6 +36,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.AccessTime
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.CameraAlt
@@ -44,11 +45,11 @@ import androidx.compose.material.icons.filled.Collections
 import androidx.compose.material.icons.filled.Compress
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Done
-import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -63,6 +64,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -85,10 +87,14 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import coil.compose.rememberAsyncImagePainter
+import androidx.compose.material3.Checkbox
 import com.example.ui.theme.BadgeGold
 import com.example.ui.theme.DutyActiveGreen
 import com.example.data.DutyRecord
 import com.example.ui.theme.DutyOffOrange
+import com.example.ui.theme.PoliceThemeColors
+import com.example.util.DutySlotRules
+import com.example.util.ReserveHolderInfo
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -99,6 +105,10 @@ import java.util.Locale
 fun DutyEntryDialog(
     initialType: String = "ON_DUTY",
     editingRecord: DutyRecord? = null,
+    assignedDuty: com.example.data.DutyAssignment? = null,
+    currentUserUid: String = "",
+    activeSingleSlotHolders: Map<String, ReserveHolderInfo> = emptyMap(),
+    onVerifyAdminPasscode: ((String) -> Boolean)? = null,
     onDismiss: () -> Unit,
     onSubmit: (
         type: String,
@@ -109,7 +119,9 @@ fun DutyEntryDialog(
         remarks: String,
         photoUri: Uri?,
         scenePhotoUri: Uri?,
-        dutyDurationMinutes: Long
+        dutyDurationMinutes: Long,
+        isHandoverConfirmed: Boolean,
+        onError: () -> Unit
     ) -> Unit
 ) {
     val context = LocalContext.current
@@ -132,8 +144,17 @@ fun DutyEntryDialog(
 
     var ibPage by remember { mutableStateOf(editingRecord?.ibPage ?: "") }
     var ibParagraph by remember { mutableStateOf(editingRecord?.ibParagraph ?: "") }
-    var dutyNature by remember { mutableStateOf(editingRecord?.dutyNature ?: if (effectiveType == "ON_DUTY") "Station Reserve" else "Off Duty") }
+
+    val defaultNature = editingRecord?.dutyNature ?: if (assignedDuty != null && effectiveType == "ON_DUTY") {
+        assignedDuty.dutyNature
+    } else if (effectiveType == "ON_DUTY") "Station Reserve (උපසේවා)" else "General Off Duty"
+
+    var dutyNature by remember { mutableStateOf(defaultNature) }
     var remarks by remember { mutableStateOf(editingRecord?.remarks ?: "") }
+    var isHandoverConfirmed by remember { mutableStateOf(false) }
+
+    var adminPasscodeInput by remember { mutableStateOf("") }
+    var adminPasscodeError by remember { mutableStateOf<String?>(null) }
 
     // Shift duration in hours & minutes
     val initHours = editingRecord?.dutyDurationMinutes?.let { (it / 60).toInt() } ?: if (effectiveType == "OFF_DUTY") 8 else 0
@@ -152,6 +173,26 @@ fun DutyEntryDialog(
     var tempSceneCameraUri by remember { mutableStateOf<Uri?>(null) }
 
     var isSubmitting by remember { mutableStateOf(false) }
+
+    val activeReserveHolder = activeSingleSlotHolders[DutySlotRules.SLOT_RESERVE]
+    val isCurrentUserUnrelievedReserve = editingRecord == null &&
+        currentUserUid.isNotBlank() &&
+        activeReserveHolder != null &&
+        activeReserveHolder.officerUid == currentUserUid
+    val selectedSlotCategory = DutySlotRules.getSingleSlotCategory(dutyNature)
+    val conflictingSlotHolder = if (editingRecord == null && selectedSlotCategory != null) {
+        activeSingleSlotHolders[selectedSlotCategory]?.takeIf { it.officerUid != currentUserUid }
+    } else {
+        null
+    }
+    val needsReserveHandover = editingRecord == null &&
+        dutyType == "ON_DUTY" &&
+        selectedSlotCategory == DutySlotRules.SLOT_RESERVE &&
+        conflictingSlotHolder != null
+    val isBlockedByReserveOffDuty = isCurrentUserUnrelievedReserve && dutyType == "OFF_DUTY"
+    val isBlockedBySingleSlotConflict = conflictingSlotHolder != null &&
+        (dutyType == "EXTRA_DUTY" || (dutyType == "ON_DUTY" && selectedSlotCategory != DutySlotRules.SLOT_RESERVE))
+    val isBlockedByLeavingReserve = isCurrentUserUnrelievedReserve && dutyType == "ON_DUTY" && selectedSlotCategory != DutySlotRules.SLOT_RESERVE
 
     // DatePicker Dialog
     val datePickerDialog = DatePickerDialog(
@@ -224,7 +265,9 @@ fun DutyEntryDialog(
     // Common duty quick selections based on type
     val dutySuggestions = when (dutyType) {
         "ON_DUTY" -> listOf(
-            "Station Reserve (ස්ථාන රක්ෂිතය)",
+            "Station Reserve (උපසේවා)",
+            "Duty Officer (රාජකාරි භාර නිලධාරී)",
+            "Charge Room Officer (චෝදනාගාර භාර)",
             "Day Shift (දිවා මුරය)",
             "Night Shift (රාත්‍රී මුරය)",
             "General Duty (සාමාන්‍ය රාජකාරිය)"
@@ -248,24 +291,57 @@ fun DutyEntryDialog(
         )
     }
 
-    val performSubmit: () -> Unit = {
+    fun performSubmit() {
         if (ibPage.isBlank()) {
             Toast.makeText(context, "කරුණාකර තොරතුරු පොතේ පිටුව ඇතුළත් කරන්න (Enter IB Page)", Toast.LENGTH_SHORT).show()
-        } else {
-            isSubmitting = true
-            val finalTimestamp = calendar.timeInMillis
-            val totalDurationMin = (durationHours * 60L) + durationMinutes
-            onSubmit(
-                dutyType,
-                finalTimestamp,
-                ibPage,
-                ibParagraph,
-                dutyNature,
-                remarks,
-                ibPhotoUri,
-                scenePhotoUri,
-                totalDurationMin
-            )
+            return
+        }
+        if (isBlockedByReserveOffDuty) {
+            Toast.makeText(context, "වෙනත් නිලධාරියෙකු උපසේවා (Station Reserve) භාර ගන්නා තෙක් Off Duty විය නොහැක!", Toast.LENGTH_LONG).show()
+            return
+        }
+        if (isBlockedByLeavingReserve) {
+            Toast.makeText(context, "වෙනත් නිලධාරියෙකු උපසේවා භාර ගන්නා තෙක් වෙනත් රාජකාරියකට මාරු විය නොහැක!", Toast.LENGTH_LONG).show()
+            return
+        }
+        if (isBlockedBySingleSlotConflict && conflictingSlotHolder != null) {
+            Toast.makeText(context, "මෙම රාජකාරියේ දැනටමත් ${conflictingSlotHolder.officerName} සිටී!", Toast.LENGTH_LONG).show()
+            return
+        }
+        if (needsReserveHandover && !isHandoverConfirmed) {
+            Toast.makeText(context, "කරුණාකර හිටපු නිලධාරියාගෙන් උපසේවා රාජකාරිය භාරගැනීම ස්ථිර කරන්න!", Toast.LENGTH_LONG).show()
+            return
+        }
+
+        // If assigned by Admin Branch and reporting on duty with a different duty nature, require 6-digit passcode
+        if (assignedDuty != null && dutyType == "ON_DUTY") {
+            val isDifferent = !dutyNature.trim().equals(assignedDuty.dutyNature.trim(), ignoreCase = true)
+            if (isDifferent) {
+                val isValidPin = onVerifyAdminPasscode?.invoke(adminPasscodeInput) == true
+                if (!isValidPin) {
+                    adminPasscodeError = "වලංගු නොවන පාලන අංශ රහස් අංකයකි! පාලන අංශයෙන් ලබාගත් අංක 6 ඇතුළත් කරන්න."
+                    Toast.makeText(context, "පාලන අංශයේ අද දින රහස් අංකය නිවැරදිව ඇතුළත් කරන්න", Toast.LENGTH_LONG).show()
+                    return
+                }
+            }
+        }
+
+        isSubmitting = true
+        val finalTimestamp = calendar.timeInMillis
+        val totalDurationMin = (durationHours * 60L) + durationMinutes
+        onSubmit(
+            dutyType,
+            finalTimestamp,
+            ibPage,
+            ibParagraph,
+            dutyNature,
+            remarks,
+            ibPhotoUri,
+            scenePhotoUri,
+            totalDurationMin,
+            isHandoverConfirmed
+        ) {
+            isSubmitting = false
         }
     }
 
@@ -322,13 +398,13 @@ fun DutyEntryDialog(
                                 imageVector = when (dutyType) {
                                     "ON_DUTY" -> Icons.Default.Security
                                     "EXTRA_DUTY" -> Icons.Default.Shield
-                                    else -> Icons.Default.MenuBook
+                                    else -> Icons.AutoMirrored.Filled.MenuBook
                                 },
                                 contentDescription = null,
                                 tint = when (dutyType) {
-                                    "ON_DUTY" -> DutyActiveGreen
-                                    "EXTRA_DUTY" -> Color(0xFF2563EB)
-                                    else -> DutyOffOrange
+                                    "ON_DUTY" -> PoliceThemeColors.greenText
+                                    "EXTRA_DUTY" -> PoliceThemeColors.blueText
+                                    else -> PoliceThemeColors.orangeText
                                 },
                                 modifier = Modifier.size(18.dp)
                             )
@@ -359,13 +435,16 @@ fun DutyEntryDialog(
                         // PROMINENT TOP SAVE BUTTON (NEVER HIDDEN BY NAVIGATION BAR)
                         Button(
                             onClick = { performSubmit() },
-                            enabled = !isSubmitting && ibPage.isNotBlank(),
+                            enabled = !isSubmitting && ibPage.isNotBlank() && !isBlockedByReserveOffDuty && !isBlockedBySingleSlotConflict && !isBlockedByLeavingReserve && (!needsReserveHandover || isHandoverConfirmed),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = when (dutyType) {
                                     "ON_DUTY" -> DutyActiveGreen
                                     "EXTRA_DUTY" -> Color(0xFF2563EB)
                                     else -> DutyOffOrange
-                                }
+                                },
+                                contentColor = Color.White,
+                                disabledContainerColor = Color(0xFF475569),
+                                disabledContentColor = Color.White.copy(alpha = 0.7f)
                             ),
                             shape = RoundedCornerShape(10.dp),
                             contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 6.dp),
@@ -410,10 +489,11 @@ fun DutyEntryDialog(
                                     .background(if (isSelected) color else Color.Transparent)
                                     .clickable {
                                         dutyType = type
+                                        isHandoverConfirmed = false
                                         dutyNature = when (type) {
-                                            "ON_DUTY" -> "Station Reserve"
-                                            "EXTRA_DUTY" -> "Day Mobile"
-                                            else -> "General Off Duty"
+                                            "ON_DUTY" -> "Station Reserve (උපසේවා)"
+                                            "EXTRA_DUTY" -> "Day Mobile (දිවා මුරසංචාරය)"
+                                            else -> "General Off Duty (සාමාන්‍ය බැහැරවීම)"
                                         }
                                         if (type == "OFF_DUTY" && durationHours == 0) durationHours = 8
                                     }
@@ -438,6 +518,7 @@ fun DutyEntryDialog(
                         OutlinedButton(
                             onClick = { datePickerDialog.show() },
                             shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = PoliceThemeColors.navyText),
                             modifier = Modifier.weight(1.2f)
                         ) {
                             Icon(Icons.Default.CalendarMonth, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -448,6 +529,7 @@ fun DutyEntryDialog(
                         OutlinedButton(
                             onClick = { timePickerDialog.show() },
                             shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = PoliceThemeColors.navyText),
                             modifier = Modifier.weight(1f)
                         ) {
                             Icon(Icons.Default.AccessTime, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -460,20 +542,20 @@ fun DutyEntryDialog(
                     if (dutyType == "OFF_DUTY") {
                         Surface(
                             shape = RoundedCornerShape(10.dp),
-                            color = DutyOffOrange.copy(alpha = 0.1f),
+                            color = DutyOffOrange.copy(alpha = 0.12f),
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Row(
                                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Icon(Icons.Default.Timer, contentDescription = null, tint = DutyOffOrange, modifier = Modifier.size(16.dp))
+                                Icon(Icons.Default.Timer, contentDescription = null, tint = PoliceThemeColors.orangeText, modifier = Modifier.size(16.dp))
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text(
                                     text = "රාජකාරි කළ කාලය: $durationHours පැය $durationMinutes මිනි",
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.Bold,
-                                    color = DutyOffOrange,
+                                    color = PoliceThemeColors.orangeText,
                                     modifier = Modifier.weight(1f)
                                 )
                                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -492,6 +574,30 @@ fun DutyEntryDialog(
                         }
                     }
 
+                    // Station Reserve Off-Duty Lock Warning Banner
+                    if (isBlockedByReserveOffDuty || isBlockedByLeavingReserve) {
+                        Card(
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(10.dp),
+                                verticalAlignment = Alignment.Top
+                            ) {
+                                Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "උපසේවා (Station Reserve) අවහිරතාවය: වෙනත් නිලධාරියෙකු පැමිණ Station Reserve රාජකාරිය භාර ගන්නා තෙක් ඔබට Off Duty වීමට හෝ වෙනත් රාජකාරියකට මාරු වීමට නොහැක.",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onErrorContainer,
+                                    lineHeight = 15.sp
+                                )
+                            }
+                        }
+                    }
+
                     // IB Page and Paragraph Fields
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -503,7 +609,7 @@ fun DutyEntryDialog(
                             label = { Text("පොතේ පිටුව (Page)", fontSize = 11.sp) },
                             placeholder = { Text("e.g. 142", fontSize = 11.sp) },
                             leadingIcon = {
-                                Icon(Icons.Default.MenuBook, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Icon(Icons.AutoMirrored.Filled.MenuBook, contentDescription = null, modifier = Modifier.size(16.dp))
                             },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             singleLine = true,
@@ -552,13 +658,179 @@ fun DutyEntryDialog(
                             val label = suggestion.substringBefore(" (")
                             FilterChip(
                                 selected = dutyNature.startsWith(label),
-                                onClick = { dutyNature = label },
-                                label = { Text(label, fontSize = 10.sp) },
+                                onClick = {
+                                    dutyNature = suggestion
+                                    isHandoverConfirmed = false
+                                },
+                                label = { Text(suggestion, fontSize = 10.sp) },
                                 colors = FilterChipDefaults.filterChipColors(
                                     selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
                                     selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
                                 )
                             )
+                        }
+                    }
+
+                    // Single-slot Duty Conflict / Station Reserve Handover Confirmation Banner
+                    if (needsReserveHandover && conflictingSlotHolder != null) {
+                        Card(
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(containerColor = BadgeGold.copy(alpha = 0.16f)),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, BadgeGold),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(10.dp)) {
+                                Text(
+                                    text = "උපසේවා (Station Reserve) රාජකාරි භාරගැනීම",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 12.sp,
+                                    color = PoliceThemeColors.goldText
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "දැනට උපසේවා රාජකාරියේ සිටින්නේ: ${conflictingSlotHolder.rank.ifBlank { "Officer" }} ${conflictingSlotHolder.officerName}. ඔබ මෙම රාජකාරිය භාරගත් පසු ඔහුට Off Duty වීමට අවසර ලැබේ.",
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    lineHeight = 15.sp
+                                )
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable { isHandoverConfirmed = !isHandoverConfirmed }
+                                        .padding(top = 6.dp)
+                                ) {
+                                    Checkbox(
+                                        checked = isHandoverConfirmed,
+                                        onCheckedChange = { isHandoverConfirmed = it }
+                                    )
+                                    Text(
+                                        text = "හිටපු නිලධාරියාගෙන් උපසේවා රාජකාරිය භාරගනිමි (Confirm Handover)",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
+                            }
+                        }
+                    } else if (isBlockedBySingleSlotConflict && conflictingSlotHolder != null) {
+                        Card(
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(10.dp),
+                                verticalAlignment = Alignment.Top
+                            ) {
+                                Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "එක් පොලිසියකට මෙම රාජකාරියට සිටිය හැක්කේ එක් නිලධාරියෙකු පමණි! දැනට [${conflictingSlotHolder.rank.ifBlank { "Officer" }} ${conflictingSlotHolder.officerName}] මෙම රාජකාරියේ නිරතව සිටී.",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onErrorContainer,
+                                    lineHeight = 15.sp
+                                )
+                            }
+                        }
+                    }
+
+                    // Assigned Duty Link & Passcode Protection
+                    if (assignedDuty != null && dutyType == "ON_DUTY") {
+                        val isDifferent = !dutyNature.trim().equals(assignedDuty.dutyNature.trim(), ignoreCase = true)
+                        if (!isDifferent) {
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = DutyActiveGreen.copy(alpha = 0.14f),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(Icons.Default.Done, contentDescription = null, tint = PoliceThemeColors.greenText, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Column {
+                                        Text(
+                                            text = "පාලන අංශය මගින් පවරන ලද රාජකාරිය (Assigned by Admin Branch)",
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 11.sp,
+                                            color = PoliceThemeColors.greenText
+                                        )
+                                        Text(
+                                            text = "${assignedDuty.dutyNature} • මුරය: ${assignedDuty.shift}",
+                                            fontSize = 12.sp,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                    }
+                                }
+                            }
+                        } else {
+                            Card(
+                                shape = RoundedCornerShape(12.dp),
+                                colors = CardDefaults.cardColors(containerColor = DutyOffOrange.copy(alpha = 0.14f)),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, DutyOffOrange.copy(alpha = 0.6f)),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(modifier = Modifier.padding(10.dp)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(Icons.Default.Warning, contentDescription = null, tint = PoliceThemeColors.orangeText, modifier = Modifier.size(18.dp))
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            text = "වෙනත් රාජකාරියක් වාර්තා කිරීම (Passcode Required)",
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 12.sp,
+                                            color = PoliceThemeColors.orangeText
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = "පාලන අංශය විසින් ඔබට පවරා ඇත්තේ '${assignedDuty.dutyNature}' රාජකාරියයි. එය වෙනුවට වෙනත් රාජකාරියක් වාර්තා කරන්නේ නම් පාලන අංශයේ අද දින අංක 6 ක Passcode එක ඇතුළත් කළ යුතුය.",
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        lineHeight = 14.sp
+                                    )
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    OutlinedTextField(
+                                        value = adminPasscodeInput,
+                                        onValueChange = {
+                                            if (it.length <= 6 && it.all { c -> c.isDigit() }) {
+                                                adminPasscodeInput = it
+                                                adminPasscodeError = null
+                                            }
+                                        },
+                                        label = { Text("පාලන අංශ රහස් අංකය (6-Digit PIN)", fontSize = 11.sp) },
+                                        placeholder = { Text("123456", fontSize = 11.sp) },
+                                        isError = adminPasscodeError != null,
+                                        supportingText = if (adminPasscodeError != null) {
+                                            { Text(adminPasscodeError ?: "", color = MaterialTheme.colorScheme.error, fontSize = 10.sp) }
+                                        } else null,
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                                        singleLine = true,
+                                        shape = RoundedCornerShape(10.dp),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .testTag("admin_passcode_duty_change_input")
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    TextButton(
+                                        onClick = {
+                                            dutyNature = assignedDuty.dutyNature
+                                            adminPasscodeInput = ""
+                                            adminPasscodeError = null
+                                        },
+                                        contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)
+                                    ) {
+                                        Text(
+                                            text = "නැවත පවරා ඇති රාජකාරියට (${assignedDuty.dutyNature}) මාරු වන්න",
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.primary,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
 
@@ -629,13 +901,16 @@ fun DutyEntryDialog(
 
                         Button(
                             onClick = { performSubmit() },
-                            enabled = !isSubmitting && ibPage.isNotBlank(),
+                            enabled = !isSubmitting && ibPage.isNotBlank() && !isBlockedByReserveOffDuty && !isBlockedBySingleSlotConflict && !isBlockedByLeavingReserve && (!needsReserveHandover || isHandoverConfirmed),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = when (dutyType) {
                                     "ON_DUTY" -> DutyActiveGreen
                                     "EXTRA_DUTY" -> Color(0xFF2563EB)
                                     else -> DutyOffOrange
-                                }
+                                },
+                                contentColor = Color.White,
+                                disabledContainerColor = Color(0xFF475569),
+                                disabledContentColor = Color.White.copy(alpha = 0.7f)
                             ),
                             shape = RoundedCornerShape(10.dp),
                             modifier = Modifier
@@ -709,7 +984,7 @@ fun PhotoPickerRow(
                         }
                     }
                     IconButton(onClick = onRemove, modifier = Modifier.size(32.dp)) {
-                        Icon(Icons.Default.Close, contentDescription = "Remove", tint = Color.Red, modifier = Modifier.size(16.dp))
+                        Icon(Icons.Default.Close, contentDescription = "Remove", tint = PoliceThemeColors.errorText, modifier = Modifier.size(16.dp))
                     }
                 }
             } else {

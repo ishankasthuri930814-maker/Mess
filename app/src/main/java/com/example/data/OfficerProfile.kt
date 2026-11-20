@@ -10,5 +10,7 @@ data class OfficerProfile(
     val rank: String = "Police Constable (PC)",
     val badgeNumber: String = "",
     val station: String = "",
+    val phoneNumber: String = "",
+    val address: String = "",
     val registeredAt: Long = System.currentTimeMillis()
 )

@@ -26,8 +26,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Call
-import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Email
@@ -41,6 +41,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.Contacts
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -54,10 +55,15 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -72,24 +78,30 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.PoliceContact
 import com.example.ui.theme.BadgeGold
+import com.example.ui.theme.BadgeGoldBright
 import com.example.ui.theme.DutyActiveGreen
 import com.example.ui.theme.DutyOffOrange
 import com.example.ui.theme.PoliceNavyDark
 import com.example.ui.theme.PoliceNavyPrimary
 import com.example.ui.theme.PoliceSlate
+import com.example.ui.theme.PoliceThemeColors
 
 @Composable
 fun DirectoryScreen(
-    viewModel: PoliceViewModel
+    viewModel: PoliceViewModel,
+    initialTab: Int = 0
 ) {
     val context = LocalContext.current
     val contacts by viewModel.filteredContacts.collectAsStateWithLifecycle()
+    val stationContacts by viewModel.stationContacts.collectAsStateWithLifecycle()
     val searchQuery by viewModel.contactSearchQuery.collectAsStateWithLifecycle()
     val selectedFilter by viewModel.contactFilter.collectAsStateWithLifecycle()
     val isLoading by viewModel.isContactsLoading.collectAsStateWithLifecycle()
+    var selectedTab by remember(initialTab) { mutableIntStateOf(initialTab) }
 
     LaunchedEffect(Unit) {
         viewModel.loadContacts(context)
+        viewModel.refreshContactsOnline(silent = true)
     }
 
     fun makeCall(phone: String) {
@@ -137,15 +149,66 @@ fun DirectoryScreen(
         }
     }
 
-    LazyColumn(
+    Column(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
-            .padding(horizontal = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-        contentPadding = PaddingValues(bottom = 32.dp)
     ) {
-        item { Spacer(modifier = Modifier.height(4.dp)) }
+        TabRow(
+            selectedTabIndex = selectedTab,
+            containerColor = MaterialTheme.colorScheme.surface,
+            contentColor = PoliceThemeColors.navyText
+        ) {
+            Tab(
+                selected = selectedTab == 0,
+                onClick = { selectedTab = 0 },
+                modifier = Modifier.testTag("directory_station_contacts_tab"),
+                text = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Contacts, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "ස්ථානීය සබඳතා (${stationContacts.size})",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            )
+            Tab(
+                selected = selectedTab == 1,
+                onClick = { selectedTab = 1 },
+                modifier = Modifier.testTag("directory_all_police_tab"),
+                text = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Phone, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "සමස්ත නාමාවලිය",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            )
+        }
+
+        if (selectedTab == 0) {
+            StationContactsSection(
+                viewModel = viewModel,
+                modifier = Modifier.weight(1f)
+            )
+        } else {
+            LazyColumn(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.background)
+                    .padding(horizontal = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+                contentPadding = PaddingValues(bottom = 32.dp)
+            ) {
+                item { Spacer(modifier = Modifier.height(4.dp)) }
 
         // 1. Directory Header Hero Banner (Matching Screenshot 5)
         item {
@@ -181,13 +244,13 @@ fun DirectoryScreen(
                                     Icon(
                                         imageVector = Icons.Default.Shield,
                                         contentDescription = null,
-                                        tint = BadgeGold,
+                                        tint = BadgeGoldBright,
                                         modifier = Modifier.size(14.dp)
                                     )
                                     Spacer(modifier = Modifier.width(4.dp))
                                     Text(
                                         text = "OFFICIAL DIRECTORY",
-                                        color = BadgeGold,
+                                        color = BadgeGoldBright,
                                         fontSize = 10.sp,
                                         fontWeight = FontWeight.Bold
                                     )
@@ -246,7 +309,8 @@ fun DirectoryScreen(
                     EmergencyButton(
                         code = "119",
                         label = "Police",
-                        color = Color(0xFFEF4444),
+                        color = Color(0xFFDC2626),
+                        textColor = PoliceThemeColors.errorText,
                         onClick = { makeCall("119") },
                         modifier = Modifier.weight(1f)
                     )
@@ -254,6 +318,7 @@ fun DirectoryScreen(
                         code = "118",
                         label = "National",
                         color = Color(0xFF1E3A8A),
+                        textColor = PoliceThemeColors.blueText,
                         onClick = { makeCall("118") },
                         modifier = Modifier.weight(1f)
                     )
@@ -261,6 +326,7 @@ fun DirectoryScreen(
                         code = "1990",
                         label = "Suwa Seriya",
                         color = Color(0xFF059669),
+                        textColor = PoliceThemeColors.greenText,
                         onClick = { makeCall("1990") },
                         modifier = Modifier.weight(1f)
                     )
@@ -268,6 +334,7 @@ fun DirectoryScreen(
                         code = "HQ",
                         label = "0112421111",
                         color = BadgeGold,
+                        textColor = PoliceThemeColors.goldText,
                         onClick = { makeCall("0112421111") },
                         modifier = Modifier.weight(1.2f)
                     )
@@ -333,7 +400,7 @@ fun DirectoryScreen(
                             label = { Text(label, fontSize = 12.sp) },
                             colors = FilterChipDefaults.filterChipColors(
                                 selectedContainerColor = MaterialTheme.colorScheme.primary,
-                                selectedLabelColor = Color.White
+                                selectedLabelColor = MaterialTheme.colorScheme.onPrimary
                             )
                         )
                     }
@@ -391,6 +458,8 @@ fun DirectoryScreen(
             }
         }
     }
+        }
+    }
 }
 
 @Composable
@@ -398,6 +467,7 @@ fun EmergencyButton(
     code: String,
     label: String,
     color: Color,
+    textColor: Color = color,
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -405,7 +475,7 @@ fun EmergencyButton(
         modifier = modifier
             .clip(RoundedCornerShape(16.dp))
             .clickable { onClick() },
-        color = color.copy(alpha = 0.12f)
+        color = color.copy(alpha = 0.14f)
     ) {
         Column(
             modifier = Modifier.padding(vertical = 10.dp, horizontal = 4.dp),
@@ -420,7 +490,7 @@ fun EmergencyButton(
                 Icon(Icons.Default.PhoneInTalk, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
             }
             Spacer(modifier = Modifier.height(4.dp))
-            Text(text = code, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = color)
+            Text(text = code, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = textColor)
             Text(text = label, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
@@ -476,7 +546,7 @@ fun PoliceContactCard(
                     ) {
                         Text(
                             text = contact.rank,
-                            color = BadgeGold,
+                            color = PoliceThemeColors.goldText,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
@@ -504,7 +574,7 @@ fun PoliceContactCard(
                                 .background(DutyActiveGreen.copy(alpha = 0.15f), CircleShape),
                             contentAlignment = Alignment.Center
                         ) {
-                            Icon(Icons.Default.Phone, contentDescription = null, tint = DutyActiveGreen, modifier = Modifier.size(18.dp))
+                            Icon(Icons.Default.Phone, contentDescription = null, tint = PoliceThemeColors.greenText, modifier = Modifier.size(18.dp))
                         }
                         Spacer(modifier = Modifier.width(10.dp))
                         Column(modifier = Modifier.weight(1f)) {
@@ -515,7 +585,10 @@ fun PoliceContactCard(
                         // Call button
                         Button(
                             onClick = { onCall(contact.primaryPhone) },
-                            colors = ButtonDefaults.buttonColors(containerColor = DutyActiveGreen),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = DutyActiveGreen,
+                                contentColor = Color.White
+                            ),
                             shape = RoundedCornerShape(10.dp),
                             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
                         ) {
@@ -553,7 +626,7 @@ fun PoliceContactCard(
                                 .background(Color(0xFF0284C7).copy(alpha = 0.15f), CircleShape),
                             contentAlignment = Alignment.Center
                         ) {
-                            Icon(Icons.Default.PhoneInTalk, contentDescription = null, tint = Color(0xFF0284C7), modifier = Modifier.size(18.dp))
+                            Icon(Icons.Default.PhoneInTalk, contentDescription = null, tint = PoliceThemeColors.blueText, modifier = Modifier.size(18.dp))
                         }
                         Spacer(modifier = Modifier.width(10.dp))
                         Column(modifier = Modifier.weight(1f)) {
@@ -563,7 +636,10 @@ fun PoliceContactCard(
 
                         Button(
                             onClick = { onCall(contact.secondaryPhone) },
-                            colors = ButtonDefaults.buttonColors(containerColor = DutyActiveGreen),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = DutyActiveGreen,
+                                contentColor = Color.White
+                            ),
                             shape = RoundedCornerShape(10.dp),
                             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
                         ) {
@@ -576,11 +652,14 @@ fun PoliceContactCard(
 
                         Button(
                             onClick = { onWhatsApp(contact.secondaryPhone) },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF059669)),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFF059669),
+                                contentColor = Color.White
+                            ),
                             shape = RoundedCornerShape(10.dp),
                             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
                         ) {
-                            Icon(Icons.Default.Chat, contentDescription = null, modifier = Modifier.size(14.dp))
+                            Icon(Icons.AutoMirrored.Filled.Chat, contentDescription = null, modifier = Modifier.size(14.dp))
                             Spacer(modifier = Modifier.width(2.dp))
                             Text("WhatsApp", fontSize = 10.sp)
                         }
@@ -629,7 +708,10 @@ fun PoliceContactCard(
 
                         Button(
                             onClick = { onCall(number) },
-                            colors = ButtonDefaults.buttonColors(containerColor = DutyActiveGreen),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = DutyActiveGreen,
+                                contentColor = Color.White
+                            ),
                             shape = RoundedCornerShape(8.dp),
                             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
                             modifier = Modifier.height(28.dp)
@@ -641,7 +723,10 @@ fun PoliceContactCard(
 
                         Button(
                             onClick = { onWhatsApp(number) },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF059669)),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFF059669),
+                                contentColor = Color.White
+                            ),
                             shape = RoundedCornerShape(8.dp),
                             contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp),
                             modifier = Modifier.height(28.dp)
@@ -665,14 +750,14 @@ fun PoliceContactCard(
                         modifier = Modifier.padding(10.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Default.Navigation, contentDescription = null, tint = DutyActiveGreen, modifier = Modifier.size(16.dp))
+                        Icon(Icons.Default.Navigation, contentDescription = null, tint = PoliceThemeColors.greenText, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(6.dp))
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = "Google Maps Navigation (මාර්ගය පෙන්වන්න)",
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = DutyActiveGreen
+                                color = PoliceThemeColors.greenText
                             )
                             if (contact.locationAddress.isNotBlank()) {
                                 Text(

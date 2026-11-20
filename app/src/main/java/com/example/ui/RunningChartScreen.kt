@@ -28,6 +28,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.Calculate
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Check
@@ -39,7 +40,6 @@ import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.LocalGasStation
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Speed
-import androidx.compose.material.icons.filled.TrendingUp
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -80,8 +80,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.RunningChartRecord
 import com.example.ui.theme.BadgeGold
 import com.example.ui.theme.DutyActiveGreen
+import com.example.ui.theme.DutyActiveGreenBright
 import com.example.ui.theme.DutyOffOrange
 import com.example.ui.theme.PoliceNavyDark
+import com.example.ui.theme.PoliceThemeColors
 import com.example.util.DateTimeUtils
 import kotlinx.coroutines.launch
 import java.util.Calendar
@@ -116,7 +118,7 @@ fun RunningChartScreen(
                     Icon(
                         imageVector = Icons.Default.DirectionsCar,
                         contentDescription = null,
-                        tint = DutyActiveGreen,
+                        tint = DutyActiveGreenBright,
                         modifier = Modifier.size(20.dp)
                     )
                 }
@@ -151,7 +153,7 @@ fun RunningChartScreen(
                     val tabIcon = when (index) {
                         0 -> Icons.Default.Calculate
                         1 -> Icons.Default.History
-                        else -> Icons.Default.TrendingUp
+                        else -> Icons.AutoMirrored.Filled.TrendingUp
                     }
                     Box(
                         modifier = Modifier
@@ -403,7 +405,7 @@ fun RunningChartCalculatorTab(
                 label = { Text("වාහනයේ නම / අංකය (Vehicle Plate No)") },
                 placeholder = { Text("e.g. KX 1493") },
                 leadingIcon = {
-                    Icon(Icons.Default.DirectionsCar, contentDescription = null, tint = DutyActiveGreen)
+                    Icon(Icons.Default.DirectionsCar, contentDescription = null, tint = PoliceThemeColors.greenText)
                 },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters),
@@ -577,21 +579,21 @@ fun RunningChartCalculatorTab(
                     Icon(
                         imageVector = Icons.Default.LocalGasStation,
                         contentDescription = null,
-                        tint = DutyOffOrange,
+                        tint = PoliceThemeColors.orangeText,
                         modifier = Modifier.size(24.dp)
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         text = "භාවිත කල ඉන්ධන",
                         fontSize = 11.sp,
-                        color = DutyOffOrange,
+                        color = PoliceThemeColors.orangeText,
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
                         text = "%.1f L".format(consumedFuel),
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Bold,
-                        color = DutyOffOrange
+                        color = PoliceThemeColors.orangeText
                     )
                 }
             }
@@ -610,21 +612,21 @@ fun RunningChartCalculatorTab(
                     Icon(
                         imageVector = Icons.Default.Speed,
                         contentDescription = null,
-                        tint = DutyActiveGreen,
+                        tint = PoliceThemeColors.greenText,
                         modifier = Modifier.size(24.dp)
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         text = "ධාවනය කළ දුර",
                         fontSize = 11.sp,
-                        color = DutyActiveGreen,
+                        color = PoliceThemeColors.greenText,
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
                         text = "%.1f km".format(distanceKm),
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Bold,
-                        color = DutyActiveGreen
+                        color = PoliceThemeColors.greenText
                     )
                 }
             }
@@ -687,7 +689,10 @@ fun RunningChartCalculatorTab(
                     isConfirmDialogOpen = true
                 },
                 enabled = vehicleNumber.isNotBlank() && (endMeter >= startMeter || distanceKm > 0),
-                colors = ButtonDefaults.buttonColors(containerColor = DutyActiveGreen),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = DutyActiveGreen,
+                    contentColor = Color.White
+                ),
                 shape = RoundedCornerShape(12.dp),
                 modifier = Modifier
                     .weight(1f)
@@ -794,7 +799,7 @@ fun ConfirmRunningChartDialog(
                             Icon(
                                 imageVector = Icons.Default.CheckCircle,
                                 contentDescription = null,
-                                tint = DutyActiveGreen,
+                                tint = PoliceThemeColors.greenText,
                                 modifier = Modifier.size(24.dp)
                             )
                         }
@@ -849,14 +854,14 @@ fun ConfirmRunningChartDialog(
                             modifier = Modifier.padding(14.dp),
                             verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            Text(text = "මීටර් ගණනය (Meter Calculation):", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = DutyActiveGreen)
+                            Text(text = "මීටර් ගණනය (Meter Calculation):", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = PoliceThemeColors.greenText)
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                 Text(text = "ආරම්භක මීටරය:", fontSize = 12.sp)
                                 Text(text = "%.1f km".format(startMeter), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                             }
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                 Text(text = "ධාවනය කළ දුර:", fontSize = 12.sp)
-                                Text(text = "%.1f km".format(distanceKm), fontSize = 13.sp, fontWeight = FontWeight.Bold, color = DutyActiveGreen)
+                                Text(text = "%.1f km".format(distanceKm), fontSize = 13.sp, fontWeight = FontWeight.Bold, color = PoliceThemeColors.greenText)
                             }
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                 Text(text = "අවසාන මීටරය:", fontSize = 12.sp)
@@ -875,22 +880,22 @@ fun ConfirmRunningChartDialog(
                             modifier = Modifier.padding(14.dp),
                             verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            Text(text = "ඉන්ධන ගණනය (Fuel Calculation):", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = BadgeGold)
+                            Text(text = "ඉන්ධන ගණනය (Fuel Calculation):", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = PoliceThemeColors.goldText)
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                 Text(text = "ආරම්භක ඉන්ධන:", fontSize = 12.sp)
                                 Text(text = "%.1f L".format(startFuel), fontSize = 12.sp)
                             }
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                 Text(text = "ලබාගත් ඉන්ධන:", fontSize = 12.sp)
-                                Text(text = "+%.1f L".format(addedFuel), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = DutyActiveGreen)
+                                Text(text = "+%.1f L".format(addedFuel), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = PoliceThemeColors.greenText)
                             }
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                 Text(text = "දැවුණු ඉන්ධන (1L = ${kmPerLiter}km):", fontSize = 12.sp)
-                                Text(text = "-%.1f L".format(consumedFuel), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = DutyOffOrange)
+                                Text(text = "-%.1f L".format(consumedFuel), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = PoliceThemeColors.orangeText)
                             }
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                 Text(text = "ටැංකියේ ඉතිරි ඉන්ධන:", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                Text(text = "%.1f L".format(remainingFuel), fontSize = 14.sp, fontWeight = FontWeight.Bold, color = BadgeGold)
+                                Text(text = "%.1f L".format(remainingFuel), fontSize = 14.sp, fontWeight = FontWeight.Bold, color = PoliceThemeColors.goldText)
                             }
                         }
                     }
@@ -914,7 +919,10 @@ fun ConfirmRunningChartDialog(
                             onClick = onConfirm,
                             modifier = Modifier.weight(1f),
                             shape = RoundedCornerShape(12.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = DutyActiveGreen)
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = DutyActiveGreen,
+                                contentColor = Color.White
+                            )
                         ) {
                             Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(4.dp))
@@ -959,7 +967,7 @@ fun RunningChartHistoryTab(
                     label = { Text("සියල්ල") },
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = MaterialTheme.colorScheme.primary,
-                        selectedLabelColor = Color.White
+                        selectedLabelColor = MaterialTheme.colorScheme.onPrimary
                     )
                 )
             }
@@ -970,7 +978,7 @@ fun RunningChartHistoryTab(
                     label = { Text(veh) },
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = MaterialTheme.colorScheme.primary,
-                        selectedLabelColor = Color.White
+                        selectedLabelColor = MaterialTheme.colorScheme.onPrimary
                     )
                 )
             }
@@ -1017,7 +1025,7 @@ fun RunningChartHistoryTab(
                         recordToDelete = null
                     }
                 ) {
-                    Text("මකන්න", color = Color.Red, fontWeight = FontWeight.Bold)
+                    Text("මකන්න", color = PoliceThemeColors.errorText, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
@@ -1055,7 +1063,7 @@ fun RunningChartHistoryCard(
                     Icon(
                         imageVector = Icons.Default.DirectionsCar,
                         contentDescription = null,
-                        tint = BadgeGold,
+                        tint = PoliceThemeColors.goldText,
                         modifier = Modifier.size(20.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
@@ -1071,7 +1079,7 @@ fun RunningChartHistoryCard(
                     text = record.date,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.SemiBold,
-                    color = BadgeGold
+                    color = PoliceThemeColors.goldText
                 )
             }
 
@@ -1091,12 +1099,12 @@ fun RunningChartHistoryCard(
                     Text(text = "%.1f km".format(record.endMeter), fontSize = 13.sp, fontWeight = FontWeight.Bold)
                 }
                 Column(horizontalAlignment = Alignment.End) {
-                    Text(text = "ධාවනය කළ දුර", fontSize = 11.sp, color = DutyActiveGreen)
+                    Text(text = "ධාවනය කළ දුර", fontSize = 11.sp, color = PoliceThemeColors.greenText)
                     Text(
                         text = "%.1f km".format(record.distanceKm),
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Bold,
-                        color = DutyActiveGreen
+                        color = PoliceThemeColors.greenText
                     )
                 }
             }
@@ -1113,16 +1121,16 @@ fun RunningChartHistoryCard(
                     Text(text = "%.1f L".format(record.startFuel), fontSize = 13.sp, fontWeight = FontWeight.Bold)
                 }
                 Column {
-                    Text(text = "ලබාගත්", fontSize = 11.sp, color = DutyActiveGreen)
-                    Text(text = "+%.1f L".format(record.addedFuel), fontSize = 13.sp, fontWeight = FontWeight.Bold, color = DutyActiveGreen)
+                    Text(text = "ලබාගත්", fontSize = 11.sp, color = PoliceThemeColors.greenText)
+                    Text(text = "+%.1f L".format(record.addedFuel), fontSize = 13.sp, fontWeight = FontWeight.Bold, color = PoliceThemeColors.greenText)
                 }
                 Column {
-                    Text(text = "දැවුණු", fontSize = 11.sp, color = DutyOffOrange)
-                    Text(text = "-%.1f L".format(record.consumedFuel), fontSize = 13.sp, fontWeight = FontWeight.Bold, color = DutyOffOrange)
+                    Text(text = "දැවුණු", fontSize = 11.sp, color = PoliceThemeColors.orangeText)
+                    Text(text = "-%.1f L".format(record.consumedFuel), fontSize = 13.sp, fontWeight = FontWeight.Bold, color = PoliceThemeColors.orangeText)
                 }
                 Column(horizontalAlignment = Alignment.End) {
-                    Text(text = "ඉතිරි ඉන්ධන", fontSize = 11.sp, color = BadgeGold)
-                    Text(text = "%.1f L".format(record.remainingFuel), fontSize = 14.sp, fontWeight = FontWeight.Bold, color = BadgeGold)
+                    Text(text = "ඉතිරි ඉන්ධන", fontSize = 11.sp, color = PoliceThemeColors.goldText)
+                    Text(text = "%.1f L".format(record.remainingFuel), fontSize = 14.sp, fontWeight = FontWeight.Bold, color = PoliceThemeColors.goldText)
                 }
             }
 
@@ -1191,7 +1199,7 @@ fun RunningChartSummaryTab(
                     label = { Text(veh) },
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = MaterialTheme.colorScheme.primary,
-                        selectedLabelColor = Color.White
+                        selectedLabelColor = MaterialTheme.colorScheme.onPrimary
                     )
                 )
             }
@@ -1232,7 +1240,7 @@ fun RunningChartSummaryTab(
                     label = "මෙම මාසයේ ලබාගත් ඉන්ධන ප්‍රමාණය",
                     value = "+%.1f Liters".format(totalAdded),
                     icon = Icons.Default.LocalGasStation,
-                    color = DutyActiveGreen
+                    color = PoliceThemeColors.greenText
                 )
 
                 SummaryRowItem(
@@ -1240,7 +1248,7 @@ fun RunningChartSummaryTab(
                     label = "මෙම මාසයේ දැවුණු ඉන්ධන ප්‍රමාණය",
                     value = "-%.1f Liters".format(totalConsumed),
                     icon = Icons.Default.LocalGasStation,
-                    color = DutyOffOrange
+                    color = PoliceThemeColors.orangeText
                 )
 
                 SummaryRowItem(
@@ -1256,7 +1264,7 @@ fun RunningChartSummaryTab(
                     label = "මෙම මාසයේ ඉතිරි ඉන්ධන ප්‍රමාණය",
                     value = "%.1f Liters".format(remainingFuel),
                     icon = Icons.Default.LocalGasStation,
-                    color = BadgeGold
+                    color = PoliceThemeColors.goldText
                 )
             }
         }

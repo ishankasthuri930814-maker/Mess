@@ -4,8 +4,10 @@ import android.app.Activity
 import android.util.Log
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Security
@@ -26,6 +28,7 @@ import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
 import com.example.R
 import com.example.ui.theme.BadgeGold
+import com.example.ui.theme.BadgeGoldBright
 import com.example.ui.theme.PoliceNavyDark
 import com.example.ui.theme.PoliceNavyPrimary
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
@@ -74,24 +77,25 @@ fun OICLoginScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .background(MaterialTheme.colorScheme.background),
+                .background(MaterialTheme.colorScheme.background)
+                .verticalScroll(rememberScrollState()),
             contentAlignment = Alignment.Center
         ) {
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(24.dp),
+                    .padding(20.dp),
                 shape = RoundedCornerShape(24.dp),
                 elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
                 colors = CardDefaults.cardColors(containerColor = PoliceNavyDark)
             ) {
                 Column(
-                    modifier = Modifier.padding(28.dp),
+                    modifier = Modifier.padding(24.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(76.dp)
+                            .size(72.dp)
                             .background(BadgeGold.copy(alpha = 0.2f), CircleShape),
                         contentAlignment = Alignment.Center
                     ) {
@@ -99,11 +103,11 @@ fun OICLoginScreen(
                             imageVector = Icons.Default.Security,
                             contentDescription = null,
                             tint = BadgeGold,
-                            modifier = Modifier.size(44.dp)
+                            modifier = Modifier.size(42.dp)
                         )
                     }
 
-                    Spacer(modifier = Modifier.height(18.dp))
+                    Spacer(modifier = Modifier.height(16.dp))
 
                     Text(
                         text = "ස්ථානාධිපති පිවිසුම",
@@ -118,22 +122,22 @@ fun OICLoginScreen(
                         fontWeight = FontWeight.SemiBold
                     )
 
-                    Spacer(modifier = Modifier.height(14.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
 
                     Text(
-                        text = "ස්ථානාධිපතිවරුන් (OIC) සඳහා පමණි. ඔබගේ Google ගිණුමෙන් පිවිසීමෙන් පසු ඔබගේ ස්ථානය සඳහා අනන්‍ය OIC කේතය (Station Code) කළමනාකරණය කරගත හැක.",
+                        text = "ස්ථානාධිපතිවරුන් (OIC) සඳහා පමණි. Google ගිණුමෙන් හෝ Username / Email සහ Password මගින් පිවිසෙන්න. එක් වරක් පිවිසුණු පසු ඔබගේ ගිණුම ස්වයංක්‍රීයව සුරැකේ.",
                         fontSize = 13.sp,
                         textAlign = TextAlign.Center,
                         color = Color.White.copy(alpha = 0.85f),
                         lineHeight = 18.sp
                     )
 
-                    Spacer(modifier = Modifier.height(28.dp))
+                    Spacer(modifier = Modifier.height(22.dp))
 
                     if (errorMessage != null) {
                         Text(
                             text = errorMessage!!,
-                            color = MaterialTheme.colorScheme.error,
+                            color = Color(0xFFFCA5A5),
                             fontSize = 12.sp,
                             modifier = Modifier.padding(bottom = 14.dp),
                             textAlign = TextAlign.Center
@@ -161,14 +165,17 @@ fun OICLoginScreen(
                         },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(52.dp),
-                        shape = RoundedCornerShape(26.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = BadgeGold),
+                            .height(50.dp),
+                        shape = RoundedCornerShape(25.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = BadgeGoldBright,
+                            contentColor = PoliceNavyDark
+                        ),
                         enabled = !isLoading
                     ) {
                         if (isLoading) {
                             CircularProgressIndicator(
-                                modifier = Modifier.size(24.dp),
+                                modifier = Modifier.size(22.dp),
                                 color = PoliceNavyDark,
                                 strokeWidth = 2.dp
                             )
@@ -176,13 +183,21 @@ fun OICLoginScreen(
                             Text(
                                 "Google සමඟ OIC පිවිසුම",
                                 fontWeight = FontWeight.Bold,
-                                fontSize = 15.sp,
+                                fontSize = 14.sp,
                                 color = PoliceNavyDark
                             )
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(16.dp))
+                    EmailPasswordAuthSection(
+                        isDarkCard = true,
+                        isLoadingExternal = isLoading,
+                        onLoadingChange = { isLoading = it },
+                        onErrorChange = { errorMessage = it },
+                        onAuthSuccess = onLoginSuccess
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
 
                     TextButton(onClick = onBack) {
                         Text("පොලිස් නිලධාරී පිවිසුම වෙත යන්න", color = Color.White.copy(alpha = 0.8f))

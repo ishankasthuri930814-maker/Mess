@@ -1,7 +1,9 @@
 package com.example
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -28,22 +30,28 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.Badge
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.LightMode
-import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.Map
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Phone
+import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material.icons.filled.Restaurant
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.Warning
 import com.example.ui.ExportReportDialog
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -74,6 +82,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -101,20 +110,37 @@ import com.example.ui.PoliceViewModelFactory
 import com.example.ui.ProfileScreen
 import com.example.ui.RegistrationScreen
 import com.example.ui.RunningChartScreen
+import com.example.ui.TeamDutyScreen
 import androidx.compose.material.icons.filled.Close
+import androidx.credentials.CredentialManager
+import com.example.ui.EmergencySosBanner
+import com.example.ui.IncomingEmergencyPopupDialog
+import com.example.ui.MapNavigationTarget
+import com.example.ui.NotificationBellButton
+import com.example.ui.NotificationsInboxDialog
+import com.example.ui.OfficerMapDialog
+import com.example.ui.SendEmergencySosDialog
+import com.example.ui.attemptAutoSignIn
 import com.example.ui.theme.BadgeGold
 import com.example.ui.theme.DutyActiveGreen
 import com.example.ui.theme.DutyOffOrange
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.theme.PoliceNavyDark
 import com.example.ui.theme.PoliceNavyPrimary
+import com.example.ui.theme.PoliceThemeColors
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
+import com.example.ui.AdminBranchLoginScreen
+import com.example.ui.AdminBranchRegistrationScreen
+import com.example.ui.AdminBranchDashboardScreen
+import com.example.data.DutyAssignment
+
 enum class Screen(val title: String, val icon: ImageVector, val label: String) {
-    DASHBOARD("මුල් පිටුව", Icons.Default.Dashboard, "Home"),
-    DUTY("රාජකාරි", Icons.Default.MenuBook, "Duty"),
-    RUNNING_CHART("ගමන් සටහන්", Icons.Default.DirectionsCar, "Running Chart"),
+    DASHBOARD("මුල්", Icons.Default.Dashboard, "Home"),
+    DUTY("රාජකාරි", Icons.AutoMirrored.Filled.MenuBook, "Duty"),
+    TEAM_DUTY("කණ්ඩායම්", Icons.Default.QrCode2, "Team"),
+    RUNNING_CHART("ගමන්", Icons.Default.DirectionsCar, "Running Chart"),
     DIRECTORY("නාමාවලිය", Icons.Default.Phone, "Directory"),
     MESS("මෙස්", Icons.Default.Restaurant, "Mess"),
     PROFILE("නිලධාරියා", Icons.Default.Badge, "Profile")
@@ -140,6 +166,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        handleEmergencyIntent(intent)
         setContent {
             val isDarkModeOverride by viewModel.isDarkMode.collectAsStateWithLifecycle()
             val systemInDark = isSystemInDarkTheme()
@@ -150,6 +177,36 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleEmergencyIntent(intent)
+    }
+
+    private fun handleEmergencyIntent(intent: Intent?) {
+        if (intent == null) return
+        if (intent.hasExtra("open_sos_lat") && intent.hasExtra("open_sos_lng")) {
+            val lat = intent.getDoubleExtra("open_sos_lat", 0.0)
+            val lng = intent.getDoubleExtra("open_sos_lng", 0.0)
+            val alertId = intent.getStringExtra("open_sos_alert_id") ?: ""
+            val title = intent.getStringExtra("open_sos_title") ?: "🚨 හදිසි SOS ස්ථානය"
+            val msg = intent.getStringExtra("open_sos_msg") ?: ""
+            val phone = intent.getStringExtra("open_sos_phone") ?: ""
+            if (lat != 0.0 || lng != 0.0) {
+                viewModel.openEmergencyRouteFromNotification(
+                    alertId = alertId,
+                    lat = lat,
+                    lng = lng,
+                    title = title,
+                    message = msg,
+                    phone = phone
+                )
+            }
+            intent.removeExtra("open_sos_lat")
+            intent.removeExtra("open_sos_lng")
+        }
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -157,16 +214,54 @@ class MainActivity : ComponentActivity() {
 fun MainPoliceApp(viewModel: PoliceViewModel, isDarkTheme: Boolean) {
     val currentUser by viewModel.currentUser.collectAsStateWithLifecycle()
     val appUser by viewModel.appUser.collectAsStateWithLifecycle()
+    val isProfileLoaded by viewModel.isProfileLoaded.collectAsStateWithLifecycle()
     val isRegistered by viewModel.isRegistered.collectAsStateWithLifecycle()
     val isOICLoggedIn by viewModel.isOICLoggedIn.collectAsStateWithLifecycle()
     val authPortal by viewModel.authPortal.collectAsStateWithLifecycle()
 
-    // 1. Not signed in with Google -> Show distinct portals
+    // 1. Not signed in with Google -> Try silent auto sign-in first unless user logged out
     if (currentUser == null) {
+        val context = LocalContext.current
+        val scope = rememberCoroutineScope()
+        val credentialManager = remember(context) { CredentialManager.create(context) }
+        var isCheckingAutoSignIn by remember { mutableStateOf(viewModel.shouldAttemptAutoSignIn()) }
+
+        LaunchedEffect(currentUser) {
+            if (viewModel.shouldAttemptAutoSignIn()) {
+                attemptAutoSignIn(
+                    context = context,
+                    credentialManager = credentialManager,
+                    scope = scope,
+                    onAuthSuccess = {
+                        viewModel.markSignedIn()
+                        isCheckingAutoSignIn = false
+                    },
+                    onUnauthenticated = {
+                        isCheckingAutoSignIn = false
+                    }
+                )
+            } else {
+                isCheckingAutoSignIn = false
+            }
+        }
+
+        if (isCheckingAutoSignIn) {
+            Surface(
+                modifier = Modifier.fillMaxSize(),
+                color = MaterialTheme.colorScheme.background
+            ) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
+            }
+            return
+        }
+
         when (authPortal) {
             AuthPortal.CHOOSER -> {
                 AuthPortalScreen(
                     onSelectOIC = { viewModel.setAuthPortal(AuthPortal.OIC) },
+                    onSelectAdminBranch = { viewModel.setAuthPortal(AuthPortal.ADMIN_BRANCH) },
                     onSelectOfficer = { viewModel.setAuthPortal(AuthPortal.OFFICER) }
                 )
             }
@@ -174,25 +269,44 @@ fun MainPoliceApp(viewModel: PoliceViewModel, isDarkTheme: Boolean) {
                 BackHandler { viewModel.setAuthPortal(AuthPortal.CHOOSER) }
                 OICLoginScreen(
                     onBack = { viewModel.setAuthPortal(AuthPortal.CHOOSER) },
-                    onLoginSuccess = { /* Handled by AuthStateListener in VM */ }
+                    onLoginSuccess = { viewModel.markSignedIn() }
+                )
+            }
+            AuthPortal.ADMIN_BRANCH -> {
+                BackHandler { viewModel.setAuthPortal(AuthPortal.CHOOSER) }
+                AdminBranchLoginScreen(
+                    onBack = { viewModel.setAuthPortal(AuthPortal.CHOOSER) },
+                    onLoginSuccess = { viewModel.markSignedIn() }
                 )
             }
             AuthPortal.OFFICER -> {
                 BackHandler { viewModel.setAuthPortal(AuthPortal.CHOOSER) }
                 OfficerLoginScreen(
                     onBack = { viewModel.setAuthPortal(AuthPortal.CHOOSER) },
-                    onLoginSuccess = { /* Handled by AuthStateListener in VM */ }
+                    onLoginSuccess = { viewModel.markSignedIn() }
                 )
             }
         }
         return
     }
 
-    // 2. Signed in with Google, but profile not in Firestore yet
+    // 2. Signed in: wait for initial profile check, then show registration if needed
     if (appUser == null) {
-        if (authPortal == AuthPortal.OIC) {
+        if (!isProfileLoaded) {
+            Surface(
+                modifier = Modifier.fillMaxSize(),
+                color = MaterialTheme.colorScheme.background
+            ) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
+            }
+        } else if (authPortal == AuthPortal.OIC) {
             BackHandler { viewModel.logout() }
             OICRegistrationScreen(viewModel = viewModel)
+        } else if (authPortal == AuthPortal.ADMIN_BRANCH) {
+            BackHandler { viewModel.logout() }
+            AdminBranchRegistrationScreen(viewModel = viewModel)
         } else {
             BackHandler { viewModel.logout() }
             OfficerRegistrationScreen(viewModel = viewModel)
@@ -201,8 +315,56 @@ fun MainPoliceApp(viewModel: PoliceViewModel, isDarkTheme: Boolean) {
     }
 
     // 3. User is an OIC -> Dedicated OIC Dashboard Screen
-    if (appUser?.role == "OIC" || isOICLoggedIn) {
+    if (appUser?.role == "OIC") {
         OICDashboardScreen(viewModel = viewModel)
+        return
+    }
+
+    // 3b. User is ADMIN_BRANCH -> Dedicated Admin Branch Portal
+    if (appUser?.role == "ADMIN_BRANCH") {
+        if (appUser?.status == "PENDING") {
+            PendingApprovalScreen(viewModel = viewModel)
+        } else if (appUser?.status == "REJECTED") {
+            Scaffold { padding ->
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(padding),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.padding(24.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(64.dp)
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            text = "පාලන අංශ ඉල්ලීම ප්‍රතික්ෂේප විය",
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "ඔබ ඇතුළත් කළ OIC කේතය හෝ විස්තර ප්‍රතික්ෂේප වී ඇත. කරුණාකර OIC ගෙන් විමසා නැවත උත්සාහ කරන්න.",
+                            textAlign = TextAlign.Center,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(24.dp))
+                        Button(onClick = { viewModel.logout() }) {
+                            Text("නැවත උත්සාහ කරන්න (Re-try / Sign Out)")
+                        }
+                    }
+                }
+            }
+        } else {
+            AdminBranchDashboardScreen(viewModel = viewModel)
+        }
         return
     }
 
@@ -254,6 +416,48 @@ fun MainPoliceApp(viewModel: PoliceViewModel, isDarkTheme: Boolean) {
         return
     }
 
+    // 5b. Approved Officer must complete mandatory full profile (name, badge, rank, phone, address)
+    val userSnapshot = appUser
+    val isOfficerProfileIncomplete = userSnapshot?.role == "OFFICER" &&
+        userSnapshot.status == "APPROVED" &&
+        (userSnapshot.displayName.isBlank() ||
+            userSnapshot.badgeNumber.isBlank() ||
+            userSnapshot.rank.isBlank() ||
+            userSnapshot.phoneNumber.filter { it.isDigit() }.length < 9 ||
+            userSnapshot.address.isBlank())
+    if (isOfficerProfileIncomplete) {
+        BackHandler { viewModel.logout() }
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = {
+                        Text(
+                            text = "නිලධාරී තොරතුරු සම්පූර්ණ කරන්න",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp
+                        )
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = PoliceNavyPrimary
+                    )
+                )
+            }
+        ) { gatePadding ->
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(gatePadding)
+            ) {
+                ProfileScreen(
+                    viewModel = viewModel,
+                    isMandatoryCompletionMode = true
+                )
+            }
+        }
+        return
+    }
+
     // 6. User is an Approved Police Officer: continues to regular officer interface below
 
     val context = LocalContext.current
@@ -272,13 +476,27 @@ fun MainPoliceApp(viewModel: PoliceViewModel, isDarkTheme: Boolean) {
     var mealDialogExisting by remember { mutableStateOf<MessRecord?>(null) }
 
     var isExportReportDialogOpen by remember { mutableStateOf(false) }
+    var isNotificationsDialogOpen by remember { mutableStateOf(false) }
+    var isSendSosDialogOpen by remember { mutableStateOf(false) }
+    var isMoreMenuExpanded by remember { mutableStateOf(false) }
 
     var activePhotoView by remember { mutableStateOf<ActivePhotoView?>(null) }
 
     val officerProfile by viewModel.officerProfile.collectAsStateWithLifecycle()
     val latestDuty by viewModel.latestDutyRecord.collectAsStateWithLifecycle()
     val latestShift by viewModel.latestShiftRecord.collectAsStateWithLifecycle()
-    val isOnDuty = latestShift?.type == "ON_DUTY"
+    val myTodayAssignedDuty by viewModel.myTodayAssignedDuty.collectAsStateWithLifecycle()
+    val unreadNotifCount by viewModel.unreadNotificationCount.collectAsStateWithLifecycle()
+    val nearbyEmergencyAlerts by viewModel.nearbyEmergencyAlerts.collectAsStateWithLifecycle()
+    val myCurrentLocation by viewModel.myCurrentLocation.collectAsStateWithLifecycle()
+    val activeEmergencyPopup by viewModel.activeEmergencyPopup.collectAsStateWithLifecycle()
+    val isRouteMapDialogOpen by viewModel.isRouteMapDialogOpen.collectAsStateWithLifecycle()
+    val stationActiveSingleSlotHolders by viewModel.stationActiveSingleSlotHolders.collectAsStateWithLifecycle()
+    val isOnDuty = appUser?.isOnDuty ?: (latestShift?.type == "ON_DUTY")
+
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { /* Permission granted or denied gracefully */ }
 
     val locationPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
@@ -291,6 +509,16 @@ fun MainPoliceApp(viewModel: PoliceViewModel, isDarkTheme: Boolean) {
     }
 
     LaunchedEffect(Unit) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val hasNotifPerm = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!hasNotifPerm) {
+                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+
         val hasFine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
         val hasCoarse = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
         if (!hasFine && !hasCoarse) {
@@ -387,40 +615,95 @@ fun MainPoliceApp(viewModel: PoliceViewModel, isDarkTheme: Boolean) {
                             }
                         }
 
-                        // PDF / Report Export Button in top bar
+                        // Emergency SOS shortcut in top bar
                         IconButton(
-                            onClick = { isExportReportDialogOpen = true },
-                            modifier = Modifier.padding(start = 2.dp)
+                            onClick = { isSendSosDialogOpen = true },
+                            modifier = Modifier.testTag("officer_sos_top_btn")
                         ) {
                             Icon(
-                                imageVector = Icons.Default.PictureAsPdf,
-                                contentDescription = "Export Report PDF",
+                                imageVector = Icons.Default.Warning,
+                                contentDescription = "Emergency SOS",
+                                tint = Color(0xFFFCA5A5)
+                            )
+                        }
+
+                        // Live Map shortcut in top bar
+                        IconButton(
+                            onClick = { viewModel.openRouteMapDialog() },
+                            modifier = Modifier.testTag("officer_map_top_btn")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Map,
+                                contentDescription = "Live Map",
                                 tint = BadgeGold
                             )
                         }
 
-                        // Dark Mode Toggle Icon
-                        IconButton(
-                            onClick = { viewModel.toggleDarkMode() },
-                            modifier = Modifier.padding(start = 2.dp)
-                        ) {
-                            Icon(
-                                imageVector = if (isDarkTheme) Icons.Default.LightMode else Icons.Default.DarkMode,
-                                contentDescription = "Toggle Dark Mode",
-                                tint = BadgeGold
-                            )
-                        }
+                        // Notifications Bell in top bar
+                        NotificationBellButton(
+                            unreadCount = unreadNotifCount,
+                            tint = BadgeGold,
+                            onClick = { isNotificationsDialogOpen = true }
+                        )
 
                         // Officer profile shortcut icon in top bar
                         IconButton(
-                            onClick = { currentScreen = Screen.PROFILE },
-                            modifier = Modifier.padding(start = 2.dp)
+                            onClick = { currentScreen = Screen.PROFILE }
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Person,
                                 contentDescription = "Officer Profile",
                                 tint = if (currentScreen == Screen.PROFILE) BadgeGold else Color.White
                             )
+                        }
+
+                        // Overflow Menu (PDF Export & Dark Mode) so TopBar stays clean
+                        Box {
+                            IconButton(
+                                onClick = { isMoreMenuExpanded = true },
+                                modifier = Modifier.testTag("officer_more_menu_btn")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.MoreVert,
+                                    contentDescription = "More Options",
+                                    tint = Color.White
+                                )
+                            }
+                            DropdownMenu(
+                                expanded = isMoreMenuExpanded,
+                                onDismissRequest = { isMoreMenuExpanded = false }
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("වාර්තා PDF (Export)") },
+                                    leadingIcon = {
+                                        Icon(
+                                            imageVector = Icons.Default.PictureAsPdf,
+                                            contentDescription = null,
+                                            tint = PoliceThemeColors.navyText
+                                        )
+                                    },
+                                    onClick = {
+                                        isMoreMenuExpanded = false
+                                        isExportReportDialogOpen = true
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(if (isDarkTheme) "දිවා තේමාව (Light Mode)" else "රාත්‍රී තේමාව (Dark Mode)")
+                                    },
+                                    leadingIcon = {
+                                        Icon(
+                                            imageVector = if (isDarkTheme) Icons.Default.LightMode else Icons.Default.DarkMode,
+                                            contentDescription = null,
+                                            tint = PoliceThemeColors.navyText
+                                        )
+                                    },
+                                    onClick = {
+                                        isMoreMenuExpanded = false
+                                        viewModel.toggleDarkMode()
+                                    }
+                                )
+                            }
                         }
                     }
                 },
@@ -439,6 +722,7 @@ fun MainPoliceApp(viewModel: PoliceViewModel, isDarkTheme: Boolean) {
                 val navItems = listOf(
                     Screen.DASHBOARD,
                     Screen.DUTY,
+                    Screen.TEAM_DUTY,
                     Screen.RUNNING_CHART,
                     Screen.DIRECTORY,
                     Screen.MESS
@@ -454,13 +738,16 @@ fun MainPoliceApp(viewModel: PoliceViewModel, isDarkTheme: Boolean) {
                         label = {
                             Text(
                                 text = screen.title,
-                                fontSize = 10.sp,
+                                fontSize = 9.sp,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis,
                                 fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
                             )
                         },
                         colors = NavigationBarItemDefaults.colors(
-                            selectedIconColor = PoliceNavyPrimary,
-                            selectedTextColor = PoliceNavyPrimary,
+                            selectedIconColor = PoliceThemeColors.navyText,
+                            selectedTextColor = PoliceThemeColors.navyText,
                             indicatorColor = BadgeGold.copy(alpha = 0.25f),
                             unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
                             unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
@@ -471,33 +758,64 @@ fun MainPoliceApp(viewModel: PoliceViewModel, isDarkTheme: Boolean) {
             }
         }
     ) { innerPadding ->
-        Box(
+        Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
                 .background(MaterialTheme.colorScheme.background)
         ) {
-            when (currentScreen) {
-                Screen.DASHBOARD -> DashboardScreen(
-                    viewModel = viewModel,
-                    onNavigateToDuty = { currentScreen = Screen.DUTY },
-                    onNavigateToRunningChart = { currentScreen = Screen.RUNNING_CHART },
-                    onNavigateToDirectory = { currentScreen = Screen.DIRECTORY },
-                    onNavigateToMess = { currentScreen = Screen.MESS },
-                    onNavigateToProfile = { currentScreen = Screen.PROFILE },
-                    onOpenDutyDialog = { type ->
-                        dutyDialogInitialType = type
-                        isDutyDialogOpen = true
+            if (nearbyEmergencyAlerts.isNotEmpty()) {
+                EmergencySosBanner(
+                    alerts = nearbyEmergencyAlerts,
+                    myLocation = myCurrentLocation,
+                    myUid = appUser?.uid ?: "",
+                    isOic = false,
+                    onClickAlertLocation = { alert ->
+                        viewModel.navigateToLocationOnMap(
+                            target = MapNavigationTarget(
+                                alertId = alert.id,
+                                title = "🚨 SOS: ${alert.senderName.ifBlank { alert.senderRole }}",
+                                subtitle = alert.message,
+                                lat = alert.lat,
+                                lng = alert.lng,
+                                phone = alert.senderPhone
+                            ),
+                            openDialog = true
+                        )
                     },
-                    onOpenMealDialog = { type ->
-                        mealDialogType = type
-                        mealDialogExisting = null
-                        isMealDialogOpen = true
-                    },
-                    onViewPhoto = { path, title, compKb, origKb ->
-                        activePhotoView = ActivePhotoView(path, title, compKb, origKb)
-                    }
+                    onResolveAlert = { viewModel.resolveEmergencyAlert(it) },
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
                 )
+            }
+
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+            ) {
+                when (currentScreen) {
+                    Screen.DASHBOARD -> DashboardScreen(
+                        viewModel = viewModel,
+                        onNavigateToDuty = { currentScreen = Screen.DUTY },
+                        onNavigateToRunningChart = { currentScreen = Screen.RUNNING_CHART },
+                        onNavigateToDirectory = { currentScreen = Screen.DIRECTORY },
+                        onNavigateToMess = { currentScreen = Screen.MESS },
+                        onNavigateToProfile = { currentScreen = Screen.PROFILE },
+                        onOpenDutyDialog = { type ->
+                            dutyDialogInitialType = type
+                            isDutyDialogOpen = true
+                        },
+                        onOpenMealDialog = { type ->
+                            mealDialogType = type
+                            mealDialogExisting = null
+                            isMealDialogOpen = true
+                        },
+                        onViewPhoto = { path, title, compKb, origKb ->
+                            activePhotoView = ActivePhotoView(path, title, compKb, origKb)
+                        },
+                        onOpenMap = { viewModel.openRouteMapDialog() },
+                        onOpenSos = { isSendSosDialogOpen = true }
+                    )
 
                 Screen.DUTY -> DutyScreen(
                     viewModel = viewModel,
@@ -511,6 +829,13 @@ fun MainPoliceApp(viewModel: PoliceViewModel, isDarkTheme: Boolean) {
                         dutyDialogInitialType = record.type
                         isDutyDialogOpen = true
                     },
+                    onViewPhoto = { path, title, compKb, origKb ->
+                        activePhotoView = ActivePhotoView(path, title, compKb, origKb)
+                    }
+                )
+
+                Screen.TEAM_DUTY -> TeamDutyScreen(
+                    viewModel = viewModel,
                     onViewPhoto = { path, title, compKb, origKb ->
                         activePhotoView = ActivePhotoView(path, title, compKb, origKb)
                     }
@@ -536,9 +861,10 @@ fun MainPoliceApp(viewModel: PoliceViewModel, isDarkTheme: Boolean) {
                     }
                 )
 
-                Screen.PROFILE -> ProfileScreen(
-                    viewModel = viewModel
-                )
+                    Screen.PROFILE -> ProfileScreen(
+                        viewModel = viewModel
+                    )
+                }
             }
         }
     }
@@ -549,11 +875,15 @@ fun MainPoliceApp(viewModel: PoliceViewModel, isDarkTheme: Boolean) {
         DutyEntryDialog(
             initialType = dutyDialogInitialType,
             editingRecord = editingDutyRecord,
+            assignedDuty = myTodayAssignedDuty,
+            currentUserUid = appUser?.uid ?: "",
+            activeSingleSlotHolders = stationActiveSingleSlotHolders,
+            onVerifyAdminPasscode = { enteredPin -> viewModel.verifyAdminDailyPasscode(enteredPin) },
             onDismiss = {
                 isDutyDialogOpen = false
                 editingDutyRecord = null
             },
-            onSubmit = { type, timestamp, page, paragraph, nature, remarks, photoUri, scenePhotoUri, durationMinutes ->
+            onSubmit = { type, timestamp, page, paragraph, nature, remarks, photoUri, scenePhotoUri, durationMinutes, isHandoverConfirmed, onError ->
                 val currentEdit = editingDutyRecord
                 if (currentEdit != null) {
                     viewModel.updateDutyRecord(
@@ -571,7 +901,8 @@ fun MainPoliceApp(viewModel: PoliceViewModel, isDarkTheme: Boolean) {
                         onSuccess = {
                             isDutyDialogOpen = false
                             editingDutyRecord = null
-                        }
+                        },
+                        onError = onError
                     )
                 } else {
                     viewModel.submitDutyReport(
@@ -585,10 +916,12 @@ fun MainPoliceApp(viewModel: PoliceViewModel, isDarkTheme: Boolean) {
                         photoUri = photoUri,
                         scenePhotoUri = scenePhotoUri,
                         dutyDurationMinutes = durationMinutes,
+                        isHandoverConfirmed = isHandoverConfirmed,
                         onSuccess = {
                             isDutyDialogOpen = false
                             editingDutyRecord = null
-                        }
+                        },
+                        onError = onError
                     )
                 }
             }
@@ -600,7 +933,7 @@ fun MainPoliceApp(viewModel: PoliceViewModel, isDarkTheme: Boolean) {
             initialMealType = mealDialogType,
             existingRecord = mealDialogExisting,
             onDismiss = { isMealDialogOpen = false },
-            onSave = { type, isTaken, notes, price, photoUri ->
+            onSave = { type, isTaken, notes, price, photoUri, onError ->
                 viewModel.saveMealDetails(
                     context = context,
                     mealType = type,
@@ -610,7 +943,8 @@ fun MainPoliceApp(viewModel: PoliceViewModel, isDarkTheme: Boolean) {
                     photoUri = photoUri,
                     onSuccess = {
                         isMealDialogOpen = false
-                    }
+                    },
+                    onError = onError
                 )
             }
         )
@@ -620,6 +954,51 @@ fun MainPoliceApp(viewModel: PoliceViewModel, isDarkTheme: Boolean) {
         ExportReportDialog(
             viewModel = viewModel,
             onDismiss = { isExportReportDialogOpen = false }
+        )
+    }
+
+    if (isNotificationsDialogOpen) {
+        NotificationsInboxDialog(
+            viewModel = viewModel,
+            isOic = false,
+            onDismiss = { isNotificationsDialogOpen = false }
+        )
+    }
+
+    if (isSendSosDialogOpen) {
+        SendEmergencySosDialog(
+            viewModel = viewModel,
+            onDismiss = { isSendSosDialogOpen = false }
+        )
+    }
+
+    if (isRouteMapDialogOpen) {
+        OfficerMapDialog(
+            viewModel = viewModel,
+            onOpenEmergencySender = { isSendSosDialogOpen = true },
+            onDismiss = { viewModel.closeRouteMapDialog() }
+        )
+    }
+
+    activeEmergencyPopup?.let { alert ->
+        IncomingEmergencyPopupDialog(
+            alert = alert,
+            myLocation = myCurrentLocation,
+            onShowRouteOnMap = {
+                viewModel.dismissEmergencyPopup()
+                viewModel.navigateToLocationOnMap(
+                    target = MapNavigationTarget(
+                        alertId = alert.id,
+                        title = "🚨 SOS: ${alert.senderName.ifBlank { alert.senderRole }}",
+                        subtitle = alert.message,
+                        lat = alert.lat,
+                        lng = alert.lng,
+                        phone = alert.senderPhone
+                    ),
+                    openDialog = true
+                )
+            },
+            onDismiss = { viewModel.dismissEmergencyPopup() }
         )
     }
 

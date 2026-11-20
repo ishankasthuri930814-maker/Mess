@@ -24,10 +24,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.DirectionsCar
-import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Restaurant
 import androidx.compose.material.icons.filled.Share
@@ -61,7 +61,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.example.ui.theme.BadgeGold
+import com.example.ui.theme.PoliceThemeColors
 import com.example.util.DateTimeUtils
 import com.example.util.ReportGenerator
 import java.text.SimpleDateFormat
@@ -204,13 +204,13 @@ fun ExportReportDialog(
                         Box(
                             modifier = Modifier
                                 .size(40.dp)
-                                .background(BadgeGold.copy(alpha = 0.2f), CircleShape),
+                                .background(PoliceThemeColors.goldText.copy(alpha = 0.2f), CircleShape),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Description,
                                 contentDescription = null,
-                                tint = BadgeGold,
+                                tint = PoliceThemeColors.goldText,
                                 modifier = Modifier.size(22.dp)
                             )
                         }
@@ -313,7 +313,7 @@ fun ExportReportDialog(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Default.MenuBook, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                                    Icon(Icons.AutoMirrored.Filled.MenuBook, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text("රාජකාරි කාලය:", fontSize = 12.sp)
                                 }
@@ -326,7 +326,7 @@ fun ExportReportDialog(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Default.Restaurant, contentDescription = null, tint = BadgeGold, modifier = Modifier.size(16.dp))
+                                    Icon(Icons.Default.Restaurant, contentDescription = null, tint = PoliceThemeColors.goldText, modifier = Modifier.size(16.dp))
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text("මෙස් වේල් / වියදම:", fontSize = 12.sp)
                                 }
@@ -339,7 +339,7 @@ fun ExportReportDialog(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Default.DirectionsCar, contentDescription = null, tint = Color(0xFF10B981), modifier = Modifier.size(16.dp))
+                                    Icon(Icons.Default.DirectionsCar, contentDescription = null, tint = PoliceThemeColors.greenText, modifier = Modifier.size(16.dp))
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text("වාහන ධාවනය:", fontSize = 12.sp)
                                 }
@@ -403,7 +403,10 @@ fun ExportReportDialog(
                             .fillMaxWidth()
                             .testTag("whatsapp_share_btn"),
                         shape = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF25D366)) // WhatsApp Green
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF128C7E),
+                            contentColor = Color.White
+                        )
                     ) {
                         Icon(Icons.Default.Share, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(8.dp))

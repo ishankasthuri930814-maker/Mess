@@ -22,6 +22,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.AccessTime
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CameraAlt
@@ -29,7 +30,6 @@ import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Compress
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
-import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Security
@@ -67,8 +67,11 @@ import coil.compose.rememberAsyncImagePainter
 import androidx.compose.material.icons.filled.Edit
 import com.example.data.DutyRecord
 import com.example.ui.theme.BadgeGold
+import com.example.ui.theme.BadgeGoldBright
 import com.example.ui.theme.DutyActiveGreen
 import com.example.ui.theme.DutyOffOrange
+import com.example.ui.theme.PoliceNavyDark
+import com.example.ui.theme.PoliceThemeColors
 import com.example.util.DateTimeUtils
 import java.io.File
 
@@ -98,7 +101,7 @@ fun DutyScreen(
             FloatingActionButton(
                 onClick = { onOpenDutyDialog("ON_DUTY") },
                 containerColor = MaterialTheme.colorScheme.primary,
-                contentColor = Color.White,
+                contentColor = MaterialTheme.colorScheme.onPrimary,
                 shape = CircleShape,
                 modifier = Modifier.testTag("add_duty_fab")
             ) {
@@ -153,7 +156,7 @@ fun DutyScreen(
                             Icon(
                                 imageVector = Icons.Default.AccessTime,
                                 contentDescription = null,
-                                tint = DutyActiveGreen,
+                                tint = PoliceThemeColors.greenText,
                                 modifier = Modifier.size(18.dp)
                             )
                         }
@@ -168,7 +171,7 @@ fun DutyScreen(
                                 text = todayDutyHours,
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = DutyActiveGreen
+                                color = PoliceThemeColors.greenText
                             )
                         }
                     }
@@ -231,7 +234,7 @@ fun DutyScreen(
                     label = { Text("සියල්ල (${dutyList.size})") },
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = MaterialTheme.colorScheme.primary,
-                        selectedLabelColor = Color.White
+                        selectedLabelColor = MaterialTheme.colorScheme.onPrimary
                     )
                 )
 
@@ -243,8 +246,9 @@ fun DutyScreen(
                         Icon(Icons.Default.CalendarMonth, contentDescription = null, modifier = Modifier.size(16.dp))
                     },
                     colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = BadgeGold,
-                        selectedLabelColor = Color.White
+                        selectedContainerColor = BadgeGoldBright,
+                        selectedLabelColor = PoliceNavyDark,
+                        selectedLeadingIconColor = PoliceNavyDark
                     )
                 )
 
@@ -325,7 +329,7 @@ fun DutyScreen(
                     ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Icon(
-                                imageVector = Icons.Default.MenuBook,
+                                imageVector = Icons.AutoMirrored.Filled.MenuBook,
                                 contentDescription = null,
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
                                 modifier = Modifier.size(64.dp)
@@ -391,7 +395,7 @@ fun DutyScreen(
                         recordToDelete = null
                     }
                 ) {
-                    Text("මකන්න", color = Color.Red, fontWeight = FontWeight.Bold)
+                    Text("මකන්න", color = PoliceThemeColors.errorText, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
@@ -414,14 +418,14 @@ fun DutyItemCard(
     val isExtraDuty = record.type == "EXTRA_DUTY"
     val isOnDuty = record.type == "ON_DUTY"
     val badgeColor = when {
-        isExtraDuty -> Color(0xFF2563EB)
-        isOnDuty -> DutyActiveGreen
-        else -> DutyOffOrange
+        isExtraDuty -> PoliceThemeColors.blueText
+        isOnDuty -> PoliceThemeColors.greenText
+        else -> PoliceThemeColors.orangeText
     }
     val badgeIcon = when {
         isExtraDuty -> Icons.Default.Shield
         isOnDuty -> Icons.Default.Security
-        else -> Icons.Default.MenuBook
+        else -> Icons.AutoMirrored.Filled.MenuBook
     }
     val badgeText = when {
         isExtraDuty -> "අමතර රාජකාරිය (Extra Duty)"
@@ -527,7 +531,7 @@ fun DutyItemCard(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(
-                            imageVector = Icons.Default.MenuBook,
+                            imageVector = Icons.AutoMirrored.Filled.MenuBook,
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(14.dp)
@@ -554,7 +558,7 @@ fun DutyItemCard(
                             Icon(
                                 imageVector = Icons.Default.Description,
                                 contentDescription = null,
-                                tint = BadgeGold,
+                                tint = PoliceThemeColors.goldText,
                                 modifier = Modifier.size(14.dp)
                             )
                             Spacer(modifier = Modifier.width(4.dp))
@@ -562,7 +566,7 @@ fun DutyItemCard(
                                 text = "ඡේදය: ${record.ibParagraph}",
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.SemiBold,
-                                color = BadgeGold
+                                color = PoliceThemeColors.goldText
                             )
                         }
                     }
@@ -582,7 +586,7 @@ fun DutyItemCard(
                             Icon(
                                 imageVector = Icons.Default.AccessTime,
                                 contentDescription = null,
-                                tint = DutyActiveGreen,
+                                tint = PoliceThemeColors.greenText,
                                 modifier = Modifier.size(14.dp)
                             )
                             Spacer(modifier = Modifier.width(4.dp))
@@ -590,7 +594,7 @@ fun DutyItemCard(
                                 text = "කාලය: ${hrs}h ${mins}m",
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = DutyActiveGreen
+                                color = PoliceThemeColors.greenText
                             )
                         }
                     }
@@ -706,7 +710,7 @@ fun DutyItemCard(
                             Icon(
                                 imageVector = Icons.Default.CameraAlt,
                                 contentDescription = null,
-                                tint = BadgeGold,
+                                tint = PoliceThemeColors.goldText,
                                 modifier = Modifier.size(13.dp)
                             )
                             Spacer(modifier = Modifier.width(4.dp))
@@ -721,7 +725,7 @@ fun DutyItemCard(
                         text = "බලන්න >",
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold,
-                        color = BadgeGold
+                        color = PoliceThemeColors.goldText
                     )
                 }
             }
@@ -764,7 +768,7 @@ fun DailyDutySummaryItemCard(
                         Icon(
                             imageVector = Icons.Default.CalendarMonth,
                             contentDescription = null,
-                            tint = BadgeGold,
+                            tint = PoliceThemeColors.goldText,
                             modifier = Modifier.size(20.dp)
                         )
                     }
@@ -795,7 +799,7 @@ fun DailyDutySummaryItemCard(
                         Icon(
                             imageVector = Icons.Default.AccessTime,
                             contentDescription = null,
-                            tint = DutyActiveGreen,
+                            tint = PoliceThemeColors.greenText,
                             modifier = Modifier.size(14.dp)
                         )
                         Spacer(modifier = Modifier.width(4.dp))
@@ -803,7 +807,7 @@ fun DailyDutySummaryItemCard(
                             text = summary.totalHoursFormatted,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
-                            color = DutyActiveGreen
+                            color = PoliceThemeColors.greenText
                         )
                     }
                 }
@@ -816,19 +820,19 @@ fun DailyDutySummaryItemCard(
             ) {
                 if (summary.onDutyRecord != null) {
                     Surface(shape = RoundedCornerShape(6.dp), color = DutyActiveGreen.copy(alpha = 0.15f)) {
-                        Text("On Duty: ${DateTimeUtils.formatTime(summary.onDutyRecord.timestamp)}", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = DutyActiveGreen, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
+                        Text("On Duty: ${DateTimeUtils.formatTime(summary.onDutyRecord.timestamp)}", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = PoliceThemeColors.greenText, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
                     }
                 }
 
                 if (summary.offDutyRecord != null) {
                     Surface(shape = RoundedCornerShape(6.dp), color = DutyOffOrange.copy(alpha = 0.15f)) {
-                        Text("Off Duty: ${DateTimeUtils.formatTime(summary.offDutyRecord.timestamp)}", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = DutyOffOrange, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
+                        Text("Off Duty: ${DateTimeUtils.formatTime(summary.offDutyRecord.timestamp)}", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = PoliceThemeColors.orangeText, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
                     }
                 }
 
                 if (summary.extraDutyRecords.isNotEmpty()) {
                     Surface(shape = RoundedCornerShape(6.dp), color = Color(0xFF2563EB).copy(alpha = 0.15f)) {
-                        Text("අමතර රාජකාරි ${summary.extraDutyRecords.size}", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2563EB), modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
+                        Text("අමතර රාජකාරි ${summary.extraDutyRecords.size}", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = PoliceThemeColors.blueText, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
                     }
                 }
 

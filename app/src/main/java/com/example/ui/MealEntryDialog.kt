@@ -81,7 +81,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import coil.compose.rememberAsyncImagePainter
 import com.example.data.MessRecord
-import com.example.ui.theme.BadgeGold
+import com.example.ui.theme.PoliceThemeColors
 import java.io.File
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -90,7 +90,7 @@ fun MealEntryDialog(
     initialMealType: String = "LUNCH",
     existingRecord: MessRecord? = null,
     onDismiss: () -> Unit,
-    onSave: (mealType: String, isTaken: Boolean, notes: String, price: Double, photoUri: Uri?) -> Unit
+    onSave: (mealType: String, isTaken: Boolean, notes: String, price: Double, photoUri: Uri?, onError: () -> Unit) -> Unit
 ) {
     val context = LocalContext.current
     var mealType by remember { mutableStateOf(existingRecord?.mealType ?: initialMealType) }
@@ -106,7 +106,9 @@ fun MealEntryDialog(
     val performSave = {
         isSaving = true
         val parsedPrice = priceText.toDoubleOrNull() ?: 0.0
-        onSave(mealType, isTaken, notes, parsedPrice, selectedPhotoUri)
+        onSave(mealType, isTaken, notes, parsedPrice, selectedPhotoUri) {
+            isSaving = false
+        }
     }
 
     val mealTitle = when (mealType) {
@@ -205,10 +207,10 @@ fun MealEntryDialog(
                         Box(
                             modifier = Modifier
                                 .size(36.dp)
-                                .background(BadgeGold.copy(alpha = 0.15f), CircleShape),
+                                .background(PoliceThemeColors.goldText.copy(alpha = 0.15f), CircleShape),
                             contentAlignment = Alignment.Center
                         ) {
-                            Icon(imageVector = mealIcon, contentDescription = null, tint = BadgeGold, modifier = Modifier.size(20.dp))
+                            Icon(imageVector = mealIcon, contentDescription = null, tint = PoliceThemeColors.goldText, modifier = Modifier.size(20.dp))
                         }
                         Spacer(modifier = Modifier.width(8.dp))
                         Column(modifier = Modifier.weight(1f)) {
@@ -237,7 +239,7 @@ fun MealEntryDialog(
                                 .testTag("top_submit_meal_btn")
                         ) {
                             if (isSaving) {
-                                CircularProgressIndicator(color = Color.White, modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                                CircularProgressIndicator(color = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
                             } else {
                                 Icon(Icons.Default.Done, contentDescription = null, modifier = Modifier.size(16.dp))
                                 Spacer(modifier = Modifier.width(4.dp))
@@ -276,7 +278,7 @@ fun MealEntryDialog(
                                 text = label,
                                 fontSize = 13.sp,
                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
+                                color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
@@ -429,7 +431,7 @@ fun MealEntryDialog(
                                 }
                             }
                             IconButton(onClick = { selectedPhotoUri = null }) {
-                                Icon(Icons.Default.Close, contentDescription = "Remove photo", tint = Color.Red)
+                                Icon(Icons.Default.Close, contentDescription = "Remove photo", tint = PoliceThemeColors.errorText)
                             }
                         }
                     }
@@ -490,7 +492,7 @@ fun MealEntryDialog(
                     ) {
                         if (isSaving) {
                             CircularProgressIndicator(
-                                color = Color.White,
+                                color = MaterialTheme.colorScheme.onPrimary,
                                 modifier = Modifier.size(20.dp),
                                 strokeWidth = 2.dp
                             )
