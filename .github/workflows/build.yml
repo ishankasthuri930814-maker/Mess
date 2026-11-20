@@ -13,24 +13,36 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up JDK 17
+      - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: '17'
+          java-version: '21'
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Set up Gradle 9.3.1
-        uses: gradle/actions/setup-gradle@v4
+      - name: Accept Android SDK Licenses
+        run: |
+          SDK_DIR="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          if [ -n "$SDK_DIR" ] && [ -x "$SDK_DIR/cmdline-tools/latest/bin/sdkmanager" ]; then
+            yes | "$SDK_DIR/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
+          fi
+
+      - name: Cache Gradle packages
+        uses: actions/cache@v4
         with:
-          gradle-version: '9.3.1'
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle/libs.versions.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
 
       - name: Restore Debug Keystore
         run: |
           if [ -f "debug.keystore.base64" ]; then
-            base64 -d debug.keystore.base64 > debug.keystore
+            tr -d '\r\n' < debug.keystore.base64 | base64 -d > debug.keystore
           else
             keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug, O=Android, C=US"
           fi
@@ -44,11 +56,22 @@ jobs:
             fi
           fi
 
-      - name: Build Debug APK
-        run: gradle assembleDebug --no-daemon
+      - name: Ensure env placeholder for Secrets plugin
+        run: |
+          if [ ! -f ".env" ] && [ ! -f ".env.example" ]; then
+            touch .env.example
+          fi
+
+      - name: Install Gradle 9.3.1 and Build Debug APK
+        run: |
+          curl -fsSL https://services.gradle.org/distributions/gradle-9.3.1-bin.zip -o /tmp/gradle-9.3.1-bin.zip
+          unzip -q /tmp/gradle-9.3.1-bin.zip -d "$HOME"
+          export PATH="$HOME/gradle-9.3.1/bin:$PATH"
+          gradle assembleDebug --no-daemon --stacktrace
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: All-In-One-Police-APK
           path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
