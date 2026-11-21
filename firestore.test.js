@@ -618,8 +618,29 @@ test("OIC can remove station member, Admin Branch can send ALL notification, and
   await assertSucceeds(
     adminDb.collection("station_chats").doc("msg_pdf").collection("chunks").doc("0000").get()
   );
+  // Station-scoped chunks list query (matching Kotlin downloadChatAttachmentToCache) succeeds for sender & station members
+  await assertSucceeds(
+    aliceDb.collection("station_chats").doc("msg_pdf").collection("chunks")
+      .where("oicStationCode", "==", "OIC-COL-1001")
+      .get()
+  );
+  await assertSucceeds(
+    adminDb.collection("station_chats").doc("msg_pdf").collection("chunks")
+      .where("oicStationCode", "==", "OIC-COL-1001")
+      .get()
+  );
+  // Unfiltered chunks list query is rejected by Firestore security rules
+  await assertFails(
+    adminDb.collection("station_chats").doc("msg_pdf").collection("chunks").get()
+  );
+  // Cross-station officer cannot read chunks by doc get or filtered list query
   await assertFails(
     kandyDb.collection("station_chats").doc("msg_pdf").collection("chunks").doc("0000").get()
+  );
+  await assertFails(
+    kandyDb.collection("station_chats").doc("msg_pdf").collection("chunks")
+      .where("oicStationCode", "==", "OIC-COL-1001")
+      .get()
   );
 
   // Attachment > 10MB (10,485,760 bytes) is rejected
@@ -641,7 +662,7 @@ test("OIC can remove station member, Admin Branch can send ALL notification, and
     })
   );
 
-  // Station member (Admin) can auto-delete expired (>48h old) message & its chunks, but NOT unexpired messages from Alice
+  // Station member (Admin) can query & auto-delete expired (>48h old) message & its chunks, but NOT unexpired messages from Alice
   await testEnv.withSecurityRulesDisabled(async (context) => {
     const db = context.firestore();
     const expiredAt = Date.now() - 60000;
@@ -666,6 +687,11 @@ test("OIC can remove station member, Admin Branch can send ALL notification, and
 
   await assertFails(
     adminDb.collection("station_chats").doc("msg_pdf").delete()
+  );
+  await assertSucceeds(
+    adminDb.collection("station_chats").doc("msg_expired").collection("chunks")
+      .where("oicStationCode", "==", "OIC-COL-1001")
+      .get()
   );
   await assertSucceeds(
     adminDb.collection("station_chats").doc("msg_expired").collection("chunks").doc("0000").delete()
@@ -843,12 +869,29 @@ test("OIC and on-duty subordinate enforce strict privacy and permission-scoped r
     })
   );
 
-  // OIC can read video slot, audio chunk, switch lensFacing, and end session
+  // OIC can read video slot, audio chunk (both doc get & oicUid-filtered list queries), switch lensFacing, and end session
   await assertSucceeds(
     oicDb.collection("live_monitors").doc("lm_1").collection("video_slots").doc("slot_0").get()
   );
   await assertSucceeds(
+    oicDb.collection("live_monitors").doc("lm_1").collection("video_slots")
+      .where("oicUid", "==", "oic_col")
+      .get()
+  );
+  await assertSucceeds(
     oicDb.collection("live_monitors").doc("lm_1").collection("audio_chunks").doc("slot_0").get()
+  );
+  await assertSucceeds(
+    oicDb.collection("live_monitors").doc("lm_1").collection("audio_chunks")
+      .where("oicUid", "==", "oic_col")
+      .get()
+  );
+  // Unfiltered list queries on video_slots / audio_chunks must be rejected
+  await assertFails(
+    oicDb.collection("live_monitors").doc("lm_1").collection("video_slots").get()
+  );
+  await assertFails(
+    oicDb.collection("live_monitors").doc("lm_1").collection("audio_chunks").get()
   );
   await assertSucceeds(
     oicDb.collection("live_monitors").doc("lm_1").update({
@@ -860,7 +903,17 @@ test("OIC and on-duty subordinate enforce strict privacy and permission-scoped r
   // Another officer (Bob) CANNOT read Alice's live session, video frame, or audio chunk
   await assertFails(bobDb.collection("live_monitors").doc("lm_1").get());
   await assertFails(bobDb.collection("live_monitors").doc("lm_1").collection("video_slots").doc("slot_0").get());
+  await assertFails(
+    bobDb.collection("live_monitors").doc("lm_1").collection("video_slots")
+      .where("oicUid", "==", "oic_col")
+      .get()
+  );
   await assertFails(bobDb.collection("live_monitors").doc("lm_1").collection("audio_chunks").doc("slot_0").get());
+  await assertFails(
+    bobDb.collection("live_monitors").doc("lm_1").collection("audio_chunks")
+      .where("oicUid", "==", "oic_col")
+      .get()
+  );
 
   // OIC ends the session cleanly
   await assertSucceeds(

@@ -1082,26 +1082,41 @@ class PoliceRepository(
             return@withContext Result.success(cached)
         }
 
+        val uid = requireUserId()
+        if (uid.isBlank()) {
+            return@withContext Result.failure(IllegalStateException("ගොනුව විවෘත කිරීමට පුරනය වී සිටිය යුතුය."))
+        }
+        val cleanStation = message.oicStationCode.trim().uppercase().take(64)
+        if (cleanStation.isBlank() && message.senderUid != uid) {
+            return@withContext Result.failure(IllegalArgumentException("පොලිස් ස්ථාන කේතය හමු නොවීය."))
+        }
+
         try {
             val mediaDir = File(context.cacheDir, "station_chat_media").apply { mkdirs() }
             val safeName = ChatAttachmentUtils.sanitizeFileName(message.attachmentName, "${message.id}.bin")
             val target = File(mediaDir, "${message.id}_$safeName")
             val temp = File(mediaDir, "${message.id}_$safeName.tmp")
 
+            val chunksRef = db.collection("station_chats")
+                .document(message.id)
+                .collection("chunks")
+            val chunksQuery = if (cleanStation.isNotBlank()) {
+                chunksRef.whereEqualTo("oicStationCode", cleanStation)
+            } else {
+                chunksRef.whereEqualTo("senderUid", uid)
+            }
+
+            // Query without orderBy to avoid requiring a composite index; sort by chunkIndex in memory
             val chunksSnap = withTimeout(35_000L) {
-                db.collection("station_chats")
-                    .document(message.id)
-                    .collection("chunks")
-                    .orderBy("chunkIndex")
-                    .get()
-                    .await()
+                chunksQuery.get().await()
             }
             if (chunksSnap.isEmpty) {
                 return@withContext Result.failure(IllegalStateException("ගොනුව Cloud වෙතින් හමු නොවීය (මැකී තිබිය හැක)."))
             }
 
+            val sortedChunkDocs = chunksSnap.documents.sortedBy { it.getLong("chunkIndex") ?: 0L }
             FileOutputStream(temp).use { fos ->
-                for (doc in chunksSnap.documents) {
+                for (doc in sortedChunkDocs) {
                     val b64 = doc.getString("data") ?: continue
                     val decoded = Base64.decode(b64, Base64.DEFAULT)
                     fos.write(decoded)
@@ -1163,7 +1178,10 @@ class PoliceRepository(
                 val isExpiredDoc = ChatAttachmentUtils.isExpired(createdAtMs, expiresAtMs, nowMs)
                 if (isExpiredDoc) {
                     try {
-                        val chunks = doc.reference.collection("chunks").get().await()
+                        val chunks = doc.reference.collection("chunks")
+                            .whereEqualTo("oicStationCode", cleanStation)
+                            .get()
+                            .await()
                         if (!chunks.isEmpty) {
                             chunks.documents.chunked(350).forEach { group ->
                                 val batch = db.batch()
@@ -1877,7 +1895,10 @@ class PoliceRepository(
     suspend fun endAndCleanupLiveMonitorSession(sessionId: String) {
         if (sessionId.isBlank()) return
         try {
+            val uid = requireUserId()
             val docRef = db.collection("live_monitors").document(sessionId)
+            val sessionSnap = try { docRef.get().await() } catch (_: Exception) { null }
+            val filterField = if (sessionSnap?.getString("officerUid") == uid) "officerUid" else "oicUid"
             try {
                 docRef.update(
                     mapOf(
@@ -1887,16 +1908,24 @@ class PoliceRepository(
                 ).await()
             } catch (_: Exception) {
             }
-            try {
-                val videoDocs = docRef.collection("video_slots").get().await()
-                for (d in videoDocs.documents) {
-                    d.reference.delete()
+            if (uid.isNotBlank()) {
+                try {
+                    val videoDocs = docRef.collection("video_slots")
+                        .whereEqualTo(filterField, uid)
+                        .get()
+                        .await()
+                    for (d in videoDocs.documents) {
+                        d.reference.delete()
+                    }
+                    val audioDocs = docRef.collection("audio_chunks")
+                        .whereEqualTo(filterField, uid)
+                        .get()
+                        .await()
+                    for (d in audioDocs.documents) {
+                        d.reference.delete()
+                    }
+                } catch (_: Exception) {
                 }
-                val audioDocs = docRef.collection("audio_chunks").get().await()
-                for (d in audioDocs.documents) {
-                    d.reference.delete()
-                }
-            } catch (_: Exception) {
             }
         } catch (e: CancellationException) {
             throw e
@@ -1906,9 +1935,11 @@ class PoliceRepository(
     }
 
     fun observeLatestVideoFrame(sessionId: String): Flow<LiveVideoSlot?> {
-        if (sessionId.isBlank()) return flowOf(null)
+        val uid = requireUserId()
+        if (sessionId.isBlank() || uid.isBlank()) return flowOf(null)
         return db.collection("live_monitors").document(sessionId)
             .collection("video_slots")
+            .whereEqualTo("oicUid", uid)
             .snapshots()
             .map { snap ->
                 snap.documents.mapNotNull { it.toObject(LiveVideoSlot::class.java) }
@@ -1922,9 +1953,11 @@ class PoliceRepository(
     }
 
     fun observeAudioChunks(sessionId: String): Flow<List<LiveAudioChunk>> {
-        if (sessionId.isBlank()) return flowOf(emptyList())
+        val uid = requireUserId()
+        if (sessionId.isBlank() || uid.isBlank()) return flowOf(emptyList())
         return db.collection("live_monitors").document(sessionId)
             .collection("audio_chunks")
+            .whereEqualTo("oicUid", uid)
             .snapshots()
             .map { snap ->
                 snap.documents.mapNotNull { it.toObject(LiveAudioChunk::class.java) }

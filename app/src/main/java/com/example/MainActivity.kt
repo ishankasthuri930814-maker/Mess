@@ -275,6 +275,7 @@ fun MainPoliceApp(viewModel: PoliceViewModel, isDarkTheme: Boolean) {
                 Lifecycle.Event.ON_RESUME -> {
                     viewModel.syncLocationTrackingOnLifecycle()
                     viewModel.syncMediaPermissions(rootContext)
+                    LiveMonitorService.ensureStandbyIfOnDuty(rootContext, appUser)
                     viewModel.activatePendingLiveMonitorFromForeground(rootContext)
                 }
                 Lifecycle.Event.ON_STOP -> {
@@ -282,12 +283,15 @@ fun MainPoliceApp(viewModel: PoliceViewModel, isDarkTheme: Boolean) {
                     if (u != null &&
                         u.role == "OFFICER" &&
                         u.status == "APPROVED" &&
-                        u.isOnDuty &&
-                        !u.pauseLocationLogging &&
-                        !u.hiddenOnMap &&
-                        BackgroundLocationService.hasForegroundLocationPermission(rootContext)
+                        u.isOnDuty
                     ) {
-                        BackgroundLocationService.startIfAllowed(rootContext, u)
+                        LiveMonitorService.ensureStandbyIfOnDuty(rootContext, u)
+                        if (!u.pauseLocationLogging &&
+                            !u.hiddenOnMap &&
+                            BackgroundLocationService.hasForegroundLocationPermission(rootContext)
+                        ) {
+                            BackgroundLocationService.startIfAllowed(rootContext, u)
+                        }
                     }
                 }
                 else -> Unit
@@ -628,6 +632,10 @@ fun MainPoliceApp(viewModel: PoliceViewModel, isDarkTheme: Boolean) {
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
         viewModel.syncMediaPermissions(context)
+        if (isOnDuty) {
+            LiveMonitorService.ensureStandbyIfOnDuty(context, appUser)
+            viewModel.activatePendingLiveMonitorFromForeground(context)
+        }
         val locGranted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
             permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true ||
             BackgroundLocationService.hasForegroundLocationPermission(context)
@@ -678,6 +686,11 @@ fun MainPoliceApp(viewModel: PoliceViewModel, isDarkTheme: Boolean) {
 
     LaunchedEffect(isOnDuty) {
         viewModel.syncMediaPermissions(context)
+        if (isOnDuty) {
+            LiveMonitorService.ensureStandbyIfOnDuty(context, appUser)
+        } else {
+            LiveMonitorService.stopCompletely(context)
+        }
         if (isOnDuty && BackgroundLocationService.hasForegroundLocationPermission(context)) {
             BackgroundLocationService.startIfAllowed(context, appUser)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&

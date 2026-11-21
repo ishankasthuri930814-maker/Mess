@@ -41,6 +41,7 @@ import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
@@ -105,6 +106,7 @@ fun OICDashboardScreen(
     val isMultiDayShiftMode by viewModel.mapMultiDayShiftMode.collectAsStateWithLifecycle()
     val stationAdminSeed by viewModel.stationAdminSeed.collectAsStateWithLifecycle()
     val oicLiveMonitorSession by viewModel.oicLiveMonitorSession.collectAsStateWithLifecycle()
+    val isOicLivePlayerOpen by viewModel.isOicLivePlayerOpen.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     val dashboardListState = rememberLazyListState()
 
@@ -222,6 +224,11 @@ fun OICDashboardScreen(
     val onDutyList = remember(approvedOfficers) {
         approvedOfficers.filter { it.isOnDuty && !it.hideDutyStatus }
     }
+    val liveMonitorReadyCount = remember(approvedOfficers, adminBranchMembers) {
+        (approvedOfficers + adminBranchMembers).count {
+            it.isOnDuty && !it.hideDutyStatus && (it.hasCameraPermission || it.hasMicPermission)
+        }
+    }
 
     var lastPendingCount by remember { mutableIntStateOf(pendingList.size) }
 
@@ -299,6 +306,31 @@ fun OICDashboardScreen(
                     }
                 },
                 actions = {
+                    IconButton(
+                        onClick = { viewModel.openOicLivePlayer() },
+                        modifier = Modifier.testTag("oic_live_player_top_btn")
+                    ) {
+                        BadgedBox(
+                            badge = {
+                                if (liveMonitorReadyCount > 0) {
+                                    Badge(containerColor = DutyActiveGreen) {
+                                        Text(
+                                            text = liveMonitorReadyCount.toString(),
+                                            color = Color.White,
+                                            fontSize = 9.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                            }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.LiveTv,
+                                contentDescription = "OIC සජීවී කැමරා / ශ්‍රව්‍ය Player",
+                                tint = BadgeGold
+                            )
+                        }
+                    }
                     IconButton(
                         onClick = { isSendSosDialogOpen = true },
                         modifier = Modifier.testTag("oic_sos_top_btn")
@@ -656,6 +688,72 @@ fun OICDashboardScreen(
                     Icon(Icons.Default.ContactPhone, contentDescription = null, modifier = Modifier.size(18.dp), tint = Color(0xFFFCD34D))
                     Spacer(modifier = Modifier.width(8.dp))
                     Text("පොලිස් දුරකථන නාමාවලිය (Google Sheet Directory)", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+
+            // 3a. Dedicated OIC Live Camera & Mic Player Launcher
+            item(key = "oic_live_player_card") {
+                Card(
+                    onClick = { viewModel.openOicLivePlayer() },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp)
+                        .testTag("oic_live_player_banner_btn"),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF1A1025)),
+                    border = BorderStroke(1.dp, Color(0xFFDC2626).copy(alpha = 0.55f))
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFFDC2626).copy(alpha = 0.22f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.LiveTv,
+                                contentDescription = null,
+                                tint = Color(0xFFF87171),
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "සජීවී කැමරා / ශ්‍රව්‍ය Player (Live Cam & Mic)",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                            Text(
+                                text = if (liveMonitorReadyCount > 0) {
+                                    "නිලධාරීන් $liveMonitorReadyCount දෙනෙකු සූදානම් • වෙන වෙනම තෝරා නරඹන්න / සවන් දෙන්න"
+                                } else {
+                                    "ඕනෑම ON DUTY නිලධාරියෙකු වෙන වෙනම තෝරා නැරඹිය හැක"
+                                },
+                                fontSize = 10.5.sp,
+                                color = Color(0xFFFCD34D)
+                            )
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = Color(0xFFDC2626)
+                        ) {
+                            Text(
+                                text = "Player",
+                                color = Color.White,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                            )
+                        }
+                    }
                 }
             }
 
@@ -1040,7 +1138,7 @@ fun OICDashboardScreen(
         )
     }
 
-    if (oicLiveMonitorSession != null) {
+    if (isOicLivePlayerOpen || oicLiveMonitorSession != null) {
         OICLiveMonitorDialog(viewModel = viewModel)
     }
 

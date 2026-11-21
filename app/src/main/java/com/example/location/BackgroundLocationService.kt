@@ -343,6 +343,9 @@ class BackgroundLocationService : Service() {
                     .putBoolean("cached_pause_location_logging", pauseLog)
                     .apply()
 
+                if (status != "APPROVED" || !onDuty) {
+                    LiveMonitorService.stopCompletely(this)
+                }
                 if (status != "APPROVED" || !onDuty || pauseLog || hiddenMap) {
                     stopTrackingAndSelf()
                 }
@@ -361,7 +364,9 @@ class BackgroundLocationService : Service() {
                         .filter { it.status == "REQUESTED" && (it.expiresAtMs == 0L || it.expiresAtMs > now) }
                         .maxByOrNull { it.createdAtMs }
                         ?: return@addSnapshotListener
-                    if (handledLiveMonitorRequests.add(req.sessionId)) {
+                    if (LiveMonitorService.activeStreamingSessionId.value != req.sessionId &&
+                        handledLiveMonitorRequests.add(req.sessionId)
+                    ) {
                         LiveMonitorService.start(this, req)
                     }
                 }

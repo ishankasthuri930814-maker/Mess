@@ -24,6 +24,14 @@ data class LiveMonitorCapability(
     }
 }
 
+data class StandbyForegroundPlan(
+    val shouldRunStandby: Boolean,
+    val useCameraType: Boolean,
+    val useMicrophoneType: Boolean
+) {
+    val canEnterForeground: Boolean get() = shouldRunStandby && (useCameraType || useMicrophoneType)
+}
+
 object LiveMediaCodecUtils {
 
     const val AUDIO_SAMPLE_RATE = 16_000
@@ -40,6 +48,29 @@ object LiveMediaCodecUtils {
         return LiveMonitorCapability(
             canStreamVideo = hasCameraPermission,
             canStreamAudio = hasMicPermission
+        )
+    }
+
+    fun resolveStandbyForegroundPlan(
+        role: String,
+        status: String,
+        isOnDuty: Boolean,
+        hasCameraPermission: Boolean,
+        hasMicPermission: Boolean
+    ): StandbyForegroundPlan {
+        val eligibleOfficer = role == "OFFICER" && status == "APPROVED" && isOnDuty
+        if (!eligibleOfficer) {
+            return StandbyForegroundPlan(
+                shouldRunStandby = false,
+                useCameraType = false,
+                useMicrophoneType = false
+            )
+        }
+        val canStandby = hasCameraPermission || hasMicPermission
+        return StandbyForegroundPlan(
+            shouldRunStandby = canStandby,
+            useCameraType = hasCameraPermission,
+            useMicrophoneType = hasMicPermission
         )
     }
 
@@ -98,10 +129,11 @@ object LiveMediaCodecUtils {
         val uBuffer = image.planes[1].buffer
         val vBuffer = image.planes[2].buffer
 
-        var rowStride = image.planes[0].rowStride
+        val yRowStride = image.planes[0].rowStride
         var pos = 0
         if (image.planes[0].pixelStride == 1) {
-            if (rowStride == width) {
+            if (yRowStride == width) {
+                yBuffer.position(0)
                 yBuffer.get(nv21, 0, ySize)
                 pos += ySize
             } else {
@@ -110,22 +142,25 @@ object LiveMediaCodecUtils {
                     yBuffer.position(yRowOffset)
                     yBuffer.get(nv21, pos, width)
                     pos += width
-                    yRowOffset += rowStride
+                    yRowOffset += yRowStride
                 }
             }
         } else {
             return null
         }
 
-        rowStride = image.planes[2].rowStride
-        val pixelStride = image.planes[2].pixelStride
+        val uRowStride = image.planes[1].rowStride
+        val uPixelStride = image.planes[1].pixelStride
+        val vRowStride = image.planes[2].rowStride
+        val vPixelStride = image.planes[2].pixelStride
         val chromaHeight = height / 2
         val chromaWidth = width / 2
         for (row in 0 until chromaHeight) {
             for (col in 0 until chromaWidth) {
-                val vuIdx = row * rowStride + col * pixelStride
-                nv21[pos++] = vBuffer.get(vuIdx)
-                nv21[pos++] = uBuffer.get(vuIdx)
+                val vIdx = row * vRowStride + col * vPixelStride
+                val uIdx = row * uRowStride + col * uPixelStride
+                nv21[pos++] = vBuffer.get(vIdx)
+                nv21[pos++] = uBuffer.get(uIdx)
             }
         }
         return nv21

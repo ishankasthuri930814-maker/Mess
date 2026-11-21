@@ -318,8 +318,8 @@ fun DashboardScreen(
                                 text = when {
                                     !hasFg -> "GPS අවසරය අවශ්‍යයි"
                                     !hasBg -> "පසුබිම් GPS: 'Allow all the time' තෝරන්න"
-                                    !ignoringBatteryOpt -> "පසුබිම් සිතියම අඛණ්ඩව ධාවනයට Battery -> Unrestricted දමන්න"
-                                    else -> "පසුබිම් GPS සක්‍රීයයි • App වසා තිබුණද සිතියම ධාවනය වේ"
+                                    !ignoringBatteryOpt -> "පසුබිම් GPS සහ සජීවී නිරීක්ෂණය සඳහා Battery -> Unrestricted දමන්න"
+                                    else -> "පසුබිම් GPS සහ නිරීක්ෂණය සක්‍රීයයි • App පසුබිමේ තිබුණද ක්‍රියාත්මක වේ"
                                 },
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,

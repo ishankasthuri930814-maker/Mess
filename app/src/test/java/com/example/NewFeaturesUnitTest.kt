@@ -228,4 +228,57 @@ class NewFeaturesUnitTest {
         )
         assertFalse(neither.canStreamAny)
     }
+
+    @Test
+    fun liveMediaCodecUtils_resolveStandbyForegroundPlanCoversDutyRolesAndPermissions() {
+        val onDutyOfficerBoth = com.example.util.LiveMediaCodecUtils.resolveStandbyForegroundPlan(
+            role = "OFFICER",
+            status = "APPROVED",
+            isOnDuty = true,
+            hasCameraPermission = true,
+            hasMicPermission = true
+        )
+        assertTrue(onDutyOfficerBoth.canEnterForeground)
+        assertTrue(onDutyOfficerBoth.useCameraType)
+        assertTrue(onDutyOfficerBoth.useMicrophoneType)
+
+        val onDutyCamOnly = com.example.util.LiveMediaCodecUtils.resolveStandbyForegroundPlan(
+            role = "OFFICER",
+            status = "APPROVED",
+            isOnDuty = true,
+            hasCameraPermission = true,
+            hasMicPermission = false
+        )
+        assertTrue(onDutyCamOnly.canEnterForeground)
+        assertTrue(onDutyCamOnly.useCameraType)
+        assertFalse(onDutyCamOnly.useMicrophoneType)
+
+        val offDutyOfficer = com.example.util.LiveMediaCodecUtils.resolveStandbyForegroundPlan(
+            role = "OFFICER",
+            status = "APPROVED",
+            isOnDuty = false,
+            hasCameraPermission = true,
+            hasMicPermission = true
+        )
+        assertFalse(offDutyOfficer.canEnterForeground)
+        assertFalse(offDutyOfficer.shouldRunStandby)
+
+        val oicUser = com.example.util.LiveMediaCodecUtils.resolveStandbyForegroundPlan(
+            role = "OIC",
+            status = "APPROVED",
+            isOnDuty = true,
+            hasCameraPermission = true,
+            hasMicPermission = true
+        )
+        assertFalse(oicUser.canEnterForeground)
+
+        val noMediaPerms = com.example.util.LiveMediaCodecUtils.resolveStandbyForegroundPlan(
+            role = "OFFICER",
+            status = "APPROVED",
+            isOnDuty = true,
+            hasCameraPermission = false,
+            hasMicPermission = false
+        )
+        assertFalse(noMediaPerms.canEnterForeground)
+    }
 }

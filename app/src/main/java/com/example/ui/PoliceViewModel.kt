@@ -83,7 +83,14 @@ import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import java.io.ByteArrayOutputStream
 import java.io.File
+import kotlin.math.abs
 import kotlin.math.max
+
+enum class OicMonitorMode {
+    BOTH,
+    CAMERA_ONLY,
+    AUDIO_ONLY
+}
 
 enum class AuthPortal {
     CHOOSER,
@@ -495,9 +502,24 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
 
     // --- Live OIC Camera & Audio Monitoring ---
     private var lastSyncedMediaPermKey: String? = null
+    private val _isOicLivePlayerOpen = MutableStateFlow(false)
+    val isOicLivePlayerOpen: StateFlow<Boolean> = _isOicLivePlayerOpen.asStateFlow()
+
     private val _oicLiveMonitorSessionId = MutableStateFlow<String?>(null)
     private val _oicLiveMonitorTarget = MutableStateFlow<AppUser?>(null)
     val oicLiveMonitorTarget: StateFlow<AppUser?> = _oicLiveMonitorTarget.asStateFlow()
+
+    private val _oicMonitorMode = MutableStateFlow(OicMonitorMode.BOTH)
+    val oicMonitorMode: StateFlow<OicMonitorMode> = _oicMonitorMode.asStateFlow()
+
+    private val _oicLiveError = MutableStateFlow<String?>(null)
+    val oicLiveError: StateFlow<String?> = _oicLiveError.asStateFlow()
+
+    private val _oicLiveAudioLevel = MutableStateFlow(0f)
+    val oicLiveAudioLevel: StateFlow<Float> = _oicLiveAudioLevel.asStateFlow()
+
+    private val _oicLiveLastFrameAtMs = MutableStateFlow(0L)
+    val oicLiveLastFrameAtMs: StateFlow<Long> = _oicLiveLastFrameAtMs.asStateFlow()
 
     private val _isOicMonitorMuted = MutableStateFlow(false)
     val isOicMonitorMuted: StateFlow<Boolean> = _isOicMonitorMuted.asStateFlow()
@@ -523,6 +545,7 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
     @OptIn(ExperimentalCoroutinesApi::class)
     val oicLiveMonitorFrame: StateFlow<Bitmap?> = _oicLiveMonitorSessionId.flatMapLatest { sid ->
         if (sid.isNullOrBlank()) {
+            _oicLiveLastFrameAtMs.value = 0L
             flow { emit(null) }
         } else {
             repository.observeLatestVideoFrame(sid).map { slot ->
@@ -532,7 +555,9 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
                     withContext(Dispatchers.Default) {
                         try {
                             val bytes = Base64.decode(slot.jpegBase64, Base64.DEFAULT)
-                            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.also {
+                                _oicLiveLastFrameAtMs.value = System.currentTimeMillis()
+                            }
                         } catch (_: Exception) {
                             null
                         }
@@ -564,6 +589,7 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
 
     fun activatePendingLiveMonitorFromForeground(context: Context = getApplication()) {
         val user = _appUser.value ?: return
+        LiveMonitorService.ensureStandbyIfOnDuty(context, user)
         val session = incomingMonitorSession.value ?: return
         if (user.role == "OIC" || user.status != "APPROVED" || !user.isOnDuty || session.status == "ENDED") return
         if (LiveMonitorService.activeStreamingSessionId.value != session.sessionId) {
@@ -573,7 +599,7 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
 
     fun stopOutgoingLiveMonitorByOfficer(context: Context = getApplication()) {
         val sid = incomingMonitorSession.value?.sessionId ?: LiveMonitorService.activeStreamingSessionId.value
-        LiveMonitorService.stop(context, sid)
+        LiveMonitorService.stopActiveSessionByOfficer(context, sid)
         if (!sid.isNullOrBlank()) {
             viewModelScope.launch(Dispatchers.IO) {
                 repository.endAndCleanupLiveMonitorSession(sid)
@@ -581,49 +607,150 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
         }
     }
 
-    fun startOicLiveMonitor(targetOfficer: AppUser) {
+    fun openOicLivePlayer(
+        targetOfficer: AppUser? = null,
+        mode: OicMonitorMode = OicMonitorMode.BOTH
+    ) {
+        val oic = _appUser.value ?: return
+        if (oic.role != "OIC") return
+        _oicLiveError.value = null
+        _isOicLivePlayerOpen.value = true
+        _oicMonitorMode.value = mode
+        if (targetOfficer != null) {
+            startOicLiveMonitor(targetOfficer, mode)
+        }
+    }
+
+    fun startOicLiveMonitor(
+        targetOfficer: AppUser,
+        requestedMode: OicMonitorMode = _oicMonitorMode.value
+    ) {
         val oic = _appUser.value ?: return
         if (oic.role != "OIC") return
         if (targetOfficer.hiddenFromStationLists) return
+
+        _isOicLivePlayerOpen.value = true
+        _oicLiveError.value = null
+
+        val prevSid = _oicLiveMonitorSessionId.value
+        val prevTargetUid = _oicLiveMonitorTarget.value?.uid
+        oicAudioPlaybackJob?.cancel()
+        oicAudioPlaybackJob = null
+        _oicLiveAudioLevel.value = 0f
+        _oicLiveLastFrameAtMs.value = 0L
+        _oicLiveMonitorSessionId.value = null
+        _oicLiveMonitorTarget.value = targetOfficer
+
         if (!targetOfficer.isOnDuty || targetOfficer.hideDutyStatus) {
-            viewModelScope.launch {
-                _userMessage.emit("නිලධාරියා ON DUTY සිටින විට පමණක් සජීවී කැමරා / ශ්‍රව්‍ය නිරීක්ෂණය කළ හැක.")
+            if (!prevSid.isNullOrBlank()) {
+                viewModelScope.launch(Dispatchers.IO) {
+                    repository.endAndCleanupLiveMonitorSession(prevSid)
+                }
             }
+            val msg = "නිලධාරියා ON DUTY සිටින විට පමණක් සජීවී කැමරා / ශ්‍රව්‍ය නිරීක්ෂණය කළ හැක."
+            _oicLiveError.value = msg
+            viewModelScope.launch { _userMessage.emit(msg) }
             return
         }
+
         val cap = LiveMediaCodecUtils.resolveMonitorCapability(
             isOnDuty = targetOfficer.isOnDuty,
             hasCameraPermission = targetOfficer.hasCameraPermission,
             hasMicPermission = targetOfficer.hasMicPermission
         )
         if (!cap.canStreamAny) {
-            viewModelScope.launch {
-                _userMessage.emit("මෙම නිලධාරියා App එකට කැමරා හෝ මයික්‍රොෆෝන අවසර ලබාදී නොමැත.")
+            if (!prevSid.isNullOrBlank()) {
+                viewModelScope.launch(Dispatchers.IO) {
+                    repository.endAndCleanupLiveMonitorSession(prevSid)
+                }
             }
+            val msg = "මෙම නිලධාරියා App එකට කැමරා හෝ මයික්‍රොෆෝන අවසර ලබාදී නොමැත."
+            _oicLiveError.value = msg
+            viewModelScope.launch { _userMessage.emit(msg) }
             return
         }
 
+        // Resolve requested camera/audio flags respecting officer's granted permissions
+        val wantCam: Boolean
+        val wantMic: Boolean
+        val resolvedMode: OicMonitorMode
+        when (requestedMode) {
+            OicMonitorMode.CAMERA_ONLY -> {
+                if (!cap.canStreamVideo) {
+                    wantCam = false
+                    wantMic = true
+                    resolvedMode = OicMonitorMode.AUDIO_ONLY
+                    _oicLiveError.value = "කැමරා අවසර නොමැති බැවින් සජීවී ශ්‍රව්‍ය පමණක් විවෘත කරන ලදී."
+                } else {
+                    wantCam = true
+                    wantMic = false
+                    resolvedMode = OicMonitorMode.CAMERA_ONLY
+                }
+            }
+            OicMonitorMode.AUDIO_ONLY -> {
+                if (!cap.canStreamAudio) {
+                    wantCam = true
+                    wantMic = false
+                    resolvedMode = OicMonitorMode.CAMERA_ONLY
+                    _oicLiveError.value = "මයික්‍රොෆෝන අවසර නොමැති බැවින් කැමරාව පමණක් විවෘත කරන ලදී."
+                } else {
+                    wantCam = false
+                    wantMic = true
+                    resolvedMode = OicMonitorMode.AUDIO_ONLY
+                }
+            }
+            OicMonitorMode.BOTH -> {
+                wantCam = cap.canStreamVideo
+                wantMic = cap.canStreamAudio
+                resolvedMode = when {
+                    wantCam && wantMic -> OicMonitorMode.BOTH
+                    wantCam -> OicMonitorMode.CAMERA_ONLY
+                    else -> OicMonitorMode.AUDIO_ONLY
+                }
+            }
+        }
+        _oicMonitorMode.value = resolvedMode
+
         viewModelScope.launch {
+            if (!prevSid.isNullOrBlank()) {
+                if (prevTargetUid == targetOfficer.uid) {
+                    withContext(Dispatchers.IO) {
+                        repository.endAndCleanupLiveMonitorSession(prevSid)
+                    }
+                    delay(350L)
+                } else {
+                    viewModelScope.launch(Dispatchers.IO) {
+                        repository.endAndCleanupLiveMonitorSession(prevSid)
+                    }
+                }
+            }
             _isOicMonitorMuted.value = false
-            _oicLiveMonitorTarget.value = targetOfficer
             val result = repository.startLiveMonitorSession(
                 oicUser = oic,
                 officerUser = targetOfficer,
-                requestedCamera = cap.canStreamVideo,
-                requestedAudio = cap.canStreamAudio
+                requestedCamera = wantCam,
+                requestedAudio = wantMic
             )
             if (result.isSuccess) {
                 val session = result.getOrThrow()
                 _oicLiveMonitorSessionId.value = session.sessionId
-                if (cap.canStreamAudio) {
+                if (wantMic) {
                     startOicAudioPlaybackJob(session.sessionId)
                 }
             } else {
-                _oicLiveMonitorTarget.value = null
-                _userMessage.emit(
-                    "සජීවී නිරීක්ෂණය ආරම්භ කිරීම අසාර්ථක විය: ${result.exceptionOrNull()?.localizedMessage ?: ""}"
-                )
+                val errMsg = "සජීවී නිරීක්ෂණය ආරම්භ කිරීම අසාර්ථක විය: ${result.exceptionOrNull()?.localizedMessage ?: ""}"
+                _oicLiveError.value = errMsg
+                _userMessage.emit(errMsg)
             }
+        }
+    }
+
+    fun setOicMonitorMode(mode: OicMonitorMode) {
+        _oicMonitorMode.value = mode
+        val currentTarget = _oicLiveMonitorTarget.value
+        val activeSid = _oicLiveMonitorSessionId.value
+        if (currentTarget != null && !activeSid.isNullOrBlank()) {
+            startOicLiveMonitor(currentTarget, mode)
         }
     }
 
@@ -667,10 +794,21 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
                                 val bytes = Base64.decode(chunk.adpcmBase64, Base64.DEFAULT)
                                 val pcm = LiveMediaCodecUtils.decodeImaAdpcm(bytes, chunk.sampleCount)
                                 if (pcm.isNotEmpty()) {
+                                    var peak = 0
+                                    val step = (pcm.size / 64).coerceAtLeast(1)
+                                    var i = 0
+                                    while (i < pcm.size) {
+                                        val sampleAbs = abs(pcm[i].toInt())
+                                        if (sampleAbs > peak) peak = sampleAbs
+                                        i += step
+                                    }
+                                    _oicLiveAudioLevel.value = (peak / 12000f).coerceIn(0.05f, 1f)
                                     track.write(pcm, 0, pcm.size)
                                 }
                             } catch (_: Exception) {
                             }
+                        } else if (_isOicMonitorMuted.value) {
+                            _oicLiveAudioLevel.value = 0f
                         }
                     }
                 }
@@ -679,6 +817,7 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
             } catch (e: Exception) {
                 Log.w("PoliceViewModel", "OIC AudioTrack playback ended", e)
             } finally {
+                _oicLiveAudioLevel.value = 0f
                 try {
                     track?.pause()
                     track?.flush()
@@ -702,20 +841,34 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
     }
 
     fun toggleOicMonitorMute() {
-        _isOicMonitorMuted.value = !_isOicMonitorMuted.value
+        val next = !_isOicMonitorMuted.value
+        _isOicMonitorMuted.value = next
+        if (next) _oicLiveAudioLevel.value = 0f
     }
 
-    fun stopOicLiveMonitor() {
+    /**
+     * Stops streaming the active officer while keeping the dedicated OIC Player open
+     * so the OIC can immediately pick another officer.
+     */
+    fun disconnectCurrentOicMonitor() {
         val sid = _oicLiveMonitorSessionId.value
         oicAudioPlaybackJob?.cancel()
         oicAudioPlaybackJob = null
+        _oicLiveAudioLevel.value = 0f
+        _oicLiveLastFrameAtMs.value = 0L
         _oicLiveMonitorSessionId.value = null
-        _oicLiveMonitorTarget.value = null
+        _oicLiveError.value = null
         if (!sid.isNullOrBlank()) {
             viewModelScope.launch(Dispatchers.IO) {
                 repository.endAndCleanupLiveMonitorSession(sid)
             }
         }
+    }
+
+    fun stopOicLiveMonitor() {
+        disconnectCurrentOicMonitor()
+        _isOicLivePlayerOpen.value = false
+        _oicLiveMonitorTarget.value = null
     }
 
     // --- Live Map, Location History Trails & Emergency SOS ---
@@ -1515,12 +1668,16 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
             locationJob = null
             oicAudioPlaybackJob?.cancel()
             oicAudioPlaybackJob = null
+            _isOicLivePlayerOpen.value = false
             _oicLiveMonitorSessionId.value = null
             _oicLiveMonitorTarget.value = null
+            _oicLiveError.value = null
+            _oicLiveAudioLevel.value = 0f
+            _oicLiveLastFrameAtMs.value = 0L
             lastSyncedMediaPermKey = null
             activeTrackingKey = null
             BackgroundLocationService.stop(getApplication())
-            LiveMonitorService.stop(getApplication())
+            LiveMonitorService.stopCompletely(getApplication())
             hydratedUid = null
             _activeTeamDutyId.value = ""
             _lastReadNotifMs.value = 0L
@@ -1675,22 +1832,25 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
                 .collect { (session, user) ->
                     val appCtx = getApplication<Application>()
                     if (user == null || user.role == "OIC" || user.status != "APPROVED") {
-                        if (LiveMonitorService.activeStreamingSessionId.value != null) {
-                            LiveMonitorService.stop(appCtx)
-                        }
+                        LiveMonitorService.stopCompletely(appCtx)
                         return@collect
                     }
-                    if (session != null && session.status != "ENDED") {
-                        if (!user.isOnDuty) {
-                            LiveMonitorService.stop(appCtx, session.sessionId)
+                    if (!user.isOnDuty) {
+                        if (session != null && session.status != "ENDED") {
                             repository.endAndCleanupLiveMonitorSession(session.sessionId)
-                        } else if (session.status == "REQUESTED" &&
+                        }
+                        LiveMonitorService.stopCompletely(appCtx)
+                        return@collect
+                    }
+                    LiveMonitorService.ensureStandbyIfOnDuty(appCtx, user)
+                    if (session != null && session.status != "ENDED") {
+                        if (session.status == "REQUESTED" &&
                             LiveMonitorService.activeStreamingSessionId.value != session.sessionId
                         ) {
                             LiveMonitorService.start(appCtx, session)
                         }
                     } else if (LiveMonitorService.activeStreamingSessionId.value != null) {
-                        LiveMonitorService.stop(appCtx)
+                        LiveMonitorService.endSessionToStandby(appCtx)
                     }
                 }
         }
@@ -2330,6 +2490,12 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
         } else {
             BackgroundLocationService.stop(getApplication())
         }
+        if (user.status == "APPROVED" && user.role == "OFFICER" && user.isOnDuty) {
+            cacheAppUser(user)
+            LiveMonitorService.ensureStandbyIfOnDuty(getApplication(), user)
+        } else {
+            LiveMonitorService.stopCompletely(getApplication())
+        }
 
         if (newKey == activeTrackingKey) return
         activeTrackingKey = newKey
@@ -2358,6 +2524,12 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
     fun syncLocationTrackingOnLifecycle() {
         val user = _appUser.value ?: return
         if (user.status != "APPROVED") return
+        if (user.role == "OFFICER" && user.isOnDuty) {
+            cacheAppUser(user)
+            LiveMonitorService.ensureStandbyIfOnDuty(getApplication(), user)
+        } else {
+            LiveMonitorService.stopCompletely(getApplication())
+        }
         if (!hasLocationPermission()) return
         if (user.role == "OFFICER" && user.isOnDuty && !user.pauseLocationLogging && !user.hiddenOnMap) {
             cacheAppUser(user)
@@ -2974,12 +3146,16 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
         locationJob = null
         oicAudioPlaybackJob?.cancel()
         oicAudioPlaybackJob = null
+        _isOicLivePlayerOpen.value = false
         _oicLiveMonitorSessionId.value = null
         _oicLiveMonitorTarget.value = null
+        _oicLiveError.value = null
+        _oicLiveAudioLevel.value = 0f
+        _oicLiveLastFrameAtMs.value = 0L
         lastSyncedMediaPermKey = null
         activeTrackingKey = null
         BackgroundLocationService.stop(getApplication())
-        LiveMonitorService.stop(getApplication())
+        LiveMonitorService.stopCompletely(getApplication())
         hydratedUid = null
         _activeTeamDutyId.value = ""
         _activeEmergencyPopup.value = null
