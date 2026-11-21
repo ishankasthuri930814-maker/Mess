@@ -129,4 +129,103 @@ class NewFeaturesUnitTest {
         assertEquals("පැය 2 විනාඩි 5", DateTimeUtils.formatSinhalaDuration(125L))
         assertEquals("දින 1 පැය 1 විනාඩි 5", DateTimeUtils.formatSinhalaDuration(25 * 60L + 5L))
     }
+
+    @Test
+    fun chatAttachmentUtils_enforces10MbLimitRetentionAndChunkReassembly() {
+        // 10 MB boundary check
+        assertFalse(com.example.util.ChatAttachmentUtils.isWithinSizeLimit(0L))
+        assertTrue(com.example.util.ChatAttachmentUtils.isWithinSizeLimit(10L * 1024L * 1024L))
+        assertFalse(com.example.util.ChatAttachmentUtils.isWithinSizeLimit(10L * 1024L * 1024L + 1L))
+
+        // 48h retention check
+        val created = 1_700_000_000_000L
+        val expires = com.example.util.ChatAttachmentUtils.computeExpiresAtMs(created)
+        assertEquals(created + 2L * 24L * 60L * 60L * 1000L, expires)
+        assertFalse(com.example.util.ChatAttachmentUtils.isExpired(created, expires, expires - 1000L))
+        assertTrue(com.example.util.ChatAttachmentUtils.isExpired(created, expires, expires))
+        assertTrue(com.example.util.ChatAttachmentUtils.isExpired(created, 0L, created + 48L * 60L * 60L * 1000L))
+
+        // Message type inference
+        assertEquals("PDF", com.example.util.ChatAttachmentUtils.inferMessageType("application/pdf", "order.pdf"))
+        assertEquals("IMAGE", com.example.util.ChatAttachmentUtils.inferMessageType("image/jpeg", "photo.jpg"))
+        assertEquals("AUDIO", com.example.util.ChatAttachmentUtils.inferMessageType("audio/mp4", "voice.m4a"))
+        assertEquals("FILE", com.example.util.ChatAttachmentUtils.inferMessageType("application/zip", "report.zip"))
+
+        // Chunk splitting + exact byte-for-byte reassembly
+        val payload = ByteArray(1_000_000) { idx -> (idx % 251).toByte() }
+        val chunks = com.example.util.ChatAttachmentUtils.splitByteArray(payload)
+        assertEquals(3, chunks.size)
+        val reassembled = chunks.fold(ByteArray(0)) { acc, bytes -> acc + bytes }
+        assertEquals(payload.size, reassembled.size)
+        assertTrue(payload.contentEquals(reassembled))
+    }
+
+    @Test
+    fun liveMediaCodecUtils_imaAdpcmRoundTripPreservesAudioShape() {
+        val sampleCount = 1600
+        val inputPcm = ShortArray(sampleCount) { i ->
+            (kotlin.math.sin(i * 2.0 * kotlin.math.PI * 440.0 / 16000.0) * 12000.0).toInt().toShort()
+        }
+        val encoded = com.example.util.LiveMediaCodecUtils.encodeImaAdpcm(inputPcm, sampleCount)
+        assertEquals(4 + (sampleCount + 1) / 2, encoded.size)
+
+        val decoded = com.example.util.LiveMediaCodecUtils.decodeImaAdpcm(encoded, sampleCount)
+        assertEquals(sampleCount, decoded.size)
+
+        val maxDecoded = decoded.maxOf { kotlin.math.abs(it.toInt()) }
+        assertTrue("Decoded sine peak should stay strong ($maxDecoded)", maxDecoded in 8000..16000)
+
+        var meanAbsError = 0.0
+        for (i in 0 until sampleCount) {
+            meanAbsError += kotlin.math.abs(inputPcm[i].toInt() - decoded[i].toInt())
+        }
+        meanAbsError /= sampleCount
+        assertTrue("IMA-ADPCM mean quantization error too high: $meanAbsError", meanAbsError < 1500.0)
+    }
+
+    @Test
+    fun liveMediaCodecUtils_resolveMonitorCapabilityRespectsDutyAndPermissions() {
+        val offDuty = com.example.util.LiveMediaCodecUtils.resolveMonitorCapability(
+            isOnDuty = false,
+            hasCameraPermission = true,
+            hasMicPermission = true
+        )
+        assertFalse(offDuty.canStreamAny)
+        assertFalse(offDuty.canStreamVideo)
+        assertFalse(offDuty.canStreamAudio)
+
+        val camOnly = com.example.util.LiveMediaCodecUtils.resolveMonitorCapability(
+            isOnDuty = true,
+            hasCameraPermission = true,
+            hasMicPermission = false
+        )
+        assertTrue(camOnly.canStreamAny)
+        assertTrue(camOnly.canStreamVideo)
+        assertFalse(camOnly.canStreamAudio)
+
+        val micOnly = com.example.util.LiveMediaCodecUtils.resolveMonitorCapability(
+            isOnDuty = true,
+            hasCameraPermission = false,
+            hasMicPermission = true
+        )
+        assertTrue(micOnly.canStreamAny)
+        assertFalse(micOnly.canStreamVideo)
+        assertTrue(micOnly.canStreamAudio)
+
+        val both = com.example.util.LiveMediaCodecUtils.resolveMonitorCapability(
+            isOnDuty = true,
+            hasCameraPermission = true,
+            hasMicPermission = true
+        )
+        assertTrue(both.canStreamAny)
+        assertTrue(both.canStreamVideo)
+        assertTrue(both.canStreamAudio)
+
+        val neither = com.example.util.LiveMediaCodecUtils.resolveMonitorCapability(
+            isOnDuty = true,
+            hasCameraPermission = false,
+            hasMicPermission = false
+        )
+        assertFalse(neither.canStreamAny)
+    }
 }

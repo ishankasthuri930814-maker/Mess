@@ -63,12 +63,26 @@ import com.example.data.AppUser
 import com.example.notifications.NotificationHelper
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.messaging.FirebaseMessaging
+import com.example.util.ChatAttachmentUtils
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.media.AudioAttributes
+import android.media.AudioFormat
+import android.media.AudioTrack
 import android.os.Looper
+import android.os.SystemClock
+import android.provider.OpenableColumns
+import android.util.Base64
+import com.example.data.LiveMonitorSession
+import com.example.streaming.LiveMonitorService
+import com.example.util.LiveMediaCodecUtils
 import com.google.android.gms.location.LocationCallback
 import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
+import java.io.ByteArrayOutputStream
+import java.io.File
 import kotlin.math.max
 
 enum class AuthPortal {
@@ -208,6 +222,8 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
             .putBoolean("cached_hidden_on_map", user.hiddenOnMap)
             .putBoolean("cached_pause_location_logging", user.pauseLocationLogging)
             .putBoolean("cached_hide_duty_status", user.hideDutyStatus)
+            .putBoolean("cached_has_camera_permission", user.hasCameraPermission)
+            .putBoolean("cached_has_mic_permission", user.hasMicPermission)
             .putString("cached_admin_secret_seed", user.adminSecretSeed)
             .putBoolean("explicit_logout", false)
             .commit()
@@ -236,6 +252,8 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
             hiddenOnMap = prefs.getBoolean("cached_hidden_on_map", false),
             pauseLocationLogging = prefs.getBoolean("cached_pause_location_logging", false),
             hideDutyStatus = prefs.getBoolean("cached_hide_duty_status", false),
+            hasCameraPermission = prefs.getBoolean("cached_has_camera_permission", false),
+            hasMicPermission = prefs.getBoolean("cached_has_mic_permission", false),
             adminSecretSeed = prefs.getString("cached_admin_secret_seed", "") ?: ""
         )
     }
@@ -265,6 +283,8 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
             .remove("cached_hidden_on_map")
             .remove("cached_pause_location_logging")
             .remove("cached_hide_duty_status")
+            .remove("cached_has_camera_permission")
+            .remove("cached_has_mic_permission")
             .remove("cached_admin_secret_seed")
             .remove("active_team_duty_id")
             .remove("admin_unlocked_date")
@@ -471,6 +491,231 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
 
     fun selectOfficer(officer: AppUser?) {
         _selectedOfficer.value = officer
+    }
+
+    // --- Live OIC Camera & Audio Monitoring ---
+    private var lastSyncedMediaPermKey: String? = null
+    private val _oicLiveMonitorSessionId = MutableStateFlow<String?>(null)
+    private val _oicLiveMonitorTarget = MutableStateFlow<AppUser?>(null)
+    val oicLiveMonitorTarget: StateFlow<AppUser?> = _oicLiveMonitorTarget.asStateFlow()
+
+    private val _isOicMonitorMuted = MutableStateFlow(false)
+    val isOicMonitorMuted: StateFlow<Boolean> = _isOicMonitorMuted.asStateFlow()
+
+    private var oicAudioPlaybackJob: Job? = null
+    private var lastPlayedAudioSeq: Long = 0L
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val incomingMonitorSession: StateFlow<LiveMonitorSession?> = _appUser.flatMapLatest { user ->
+        if (user != null && user.uid.isNotBlank() && user.status == "APPROVED" && user.role != "OIC") {
+            repository.observeIncomingMonitorRequestForOfficer(user.uid)
+        } else {
+            flow { emit(null) }
+        }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val oicLiveMonitorSession: StateFlow<LiveMonitorSession?> = _oicLiveMonitorSessionId.flatMapLatest { sid ->
+        if (sid.isNullOrBlank()) flow { emit(null) }
+        else repository.observeLiveMonitorSession(sid)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), null)
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val oicLiveMonitorFrame: StateFlow<Bitmap?> = _oicLiveMonitorSessionId.flatMapLatest { sid ->
+        if (sid.isNullOrBlank()) {
+            flow { emit(null) }
+        } else {
+            repository.observeLatestVideoFrame(sid).map { slot ->
+                if (slot == null || slot.jpegBase64.isBlank()) {
+                    null
+                } else {
+                    withContext(Dispatchers.Default) {
+                        try {
+                            val bytes = Base64.decode(slot.jpegBase64, Base64.DEFAULT)
+                            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                        } catch (_: Exception) {
+                            null
+                        }
+                    }
+                }
+            }
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), null)
+
+    fun syncMediaPermissions(context: Context = getApplication()) {
+        val user = _appUser.value ?: return
+        if (user.uid.isBlank() || user.role == "OIC") return
+        val hasCam = LiveMonitorService.hasCameraPermission(context)
+        val hasMic = LiveMonitorService.hasMicPermission(context)
+        val key = "${user.uid}:$hasCam:$hasMic"
+        if (user.hasCameraPermission == hasCam && user.hasMicPermission == hasMic) {
+            lastSyncedMediaPermKey = key
+            return
+        }
+        if (key == lastSyncedMediaPermKey) return
+        lastSyncedMediaPermKey = key
+        val updated = user.copy(hasCameraPermission = hasCam, hasMicPermission = hasMic)
+        _appUser.value = updated
+        cacheAppUser(updated)
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.updateMediaPermissions(user.uid, hasCam, hasMic)
+        }
+    }
+
+    fun activatePendingLiveMonitorFromForeground(context: Context = getApplication()) {
+        val user = _appUser.value ?: return
+        val session = incomingMonitorSession.value ?: return
+        if (user.role == "OIC" || user.status != "APPROVED" || !user.isOnDuty || session.status == "ENDED") return
+        if (LiveMonitorService.activeStreamingSessionId.value != session.sessionId) {
+            LiveMonitorService.start(context, session)
+        }
+    }
+
+    fun stopOutgoingLiveMonitorByOfficer(context: Context = getApplication()) {
+        val sid = incomingMonitorSession.value?.sessionId ?: LiveMonitorService.activeStreamingSessionId.value
+        LiveMonitorService.stop(context, sid)
+        if (!sid.isNullOrBlank()) {
+            viewModelScope.launch(Dispatchers.IO) {
+                repository.endAndCleanupLiveMonitorSession(sid)
+            }
+        }
+    }
+
+    fun startOicLiveMonitor(targetOfficer: AppUser) {
+        val oic = _appUser.value ?: return
+        if (oic.role != "OIC") return
+        if (targetOfficer.hiddenFromStationLists) return
+        if (!targetOfficer.isOnDuty || targetOfficer.hideDutyStatus) {
+            viewModelScope.launch {
+                _userMessage.emit("නිලධාරියා ON DUTY සිටින විට පමණක් සජීවී කැමරා / ශ්‍රව්‍ය නිරීක්ෂණය කළ හැක.")
+            }
+            return
+        }
+        val cap = LiveMediaCodecUtils.resolveMonitorCapability(
+            isOnDuty = targetOfficer.isOnDuty,
+            hasCameraPermission = targetOfficer.hasCameraPermission,
+            hasMicPermission = targetOfficer.hasMicPermission
+        )
+        if (!cap.canStreamAny) {
+            viewModelScope.launch {
+                _userMessage.emit("මෙම නිලධාරියා App එකට කැමරා හෝ මයික්‍රොෆෝන අවසර ලබාදී නොමැත.")
+            }
+            return
+        }
+
+        viewModelScope.launch {
+            _isOicMonitorMuted.value = false
+            _oicLiveMonitorTarget.value = targetOfficer
+            val result = repository.startLiveMonitorSession(
+                oicUser = oic,
+                officerUser = targetOfficer,
+                requestedCamera = cap.canStreamVideo,
+                requestedAudio = cap.canStreamAudio
+            )
+            if (result.isSuccess) {
+                val session = result.getOrThrow()
+                _oicLiveMonitorSessionId.value = session.sessionId
+                if (cap.canStreamAudio) {
+                    startOicAudioPlaybackJob(session.sessionId)
+                }
+            } else {
+                _oicLiveMonitorTarget.value = null
+                _userMessage.emit(
+                    "සජීවී නිරීක්ෂණය ආරම්භ කිරීම අසාර්ථක විය: ${result.exceptionOrNull()?.localizedMessage ?: ""}"
+                )
+            }
+        }
+    }
+
+    private fun startOicAudioPlaybackJob(sessionId: String) {
+        oicAudioPlaybackJob?.cancel()
+        lastPlayedAudioSeq = 0L
+        oicAudioPlaybackJob = viewModelScope.launch(Dispatchers.IO) {
+            val sampleRate = LiveMediaCodecUtils.AUDIO_SAMPLE_RATE
+            val minBuf = AudioTrack.getMinBufferSize(
+                sampleRate,
+                AudioFormat.CHANNEL_OUT_MONO,
+                AudioFormat.ENCODING_PCM_16BIT
+            ).coerceAtLeast(sampleRate)
+            var track: AudioTrack? = null
+            try {
+                track = AudioTrack.Builder()
+                    .setAudioAttributes(
+                        AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_MEDIA)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                            .build()
+                    )
+                    .setAudioFormat(
+                        AudioFormat.Builder()
+                            .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                            .setSampleRate(sampleRate)
+                            .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                            .build()
+                    )
+                    .setTransferMode(AudioTrack.MODE_STREAM)
+                    .setBufferSizeInBytes(minBuf * 3)
+                    .build()
+                track.play()
+
+                repository.observeAudioChunks(sessionId).collect { chunks ->
+                    for (chunk in chunks) {
+                        if (chunk.seq <= lastPlayedAudioSeq) continue
+                        lastPlayedAudioSeq = chunk.seq
+                        if (!_isOicMonitorMuted.value && chunk.adpcmBase64.isNotBlank() && chunk.sampleCount > 0) {
+                            try {
+                                val bytes = Base64.decode(chunk.adpcmBase64, Base64.DEFAULT)
+                                val pcm = LiveMediaCodecUtils.decodeImaAdpcm(bytes, chunk.sampleCount)
+                                if (pcm.isNotEmpty()) {
+                                    track.write(pcm, 0, pcm.size)
+                                }
+                            } catch (_: Exception) {
+                            }
+                        }
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w("PoliceViewModel", "OIC AudioTrack playback ended", e)
+            } finally {
+                try {
+                    track?.pause()
+                    track?.flush()
+                } catch (_: Exception) {
+                }
+                try {
+                    track?.release()
+                } catch (_: Exception) {
+                }
+            }
+        }
+    }
+
+    fun switchOicMonitorCamera() {
+        val session = oicLiveMonitorSession.value ?: return
+        if (!session.requestedCamera) return
+        val nextLens = if (session.lensFacing == "FRONT") "BACK" else "FRONT"
+        viewModelScope.launch {
+            repository.updateLiveMonitorControl(session.sessionId, lensFacing = nextLens)
+        }
+    }
+
+    fun toggleOicMonitorMute() {
+        _isOicMonitorMuted.value = !_isOicMonitorMuted.value
+    }
+
+    fun stopOicLiveMonitor() {
+        val sid = _oicLiveMonitorSessionId.value
+        oicAudioPlaybackJob?.cancel()
+        oicAudioPlaybackJob = null
+        _oicLiveMonitorSessionId.value = null
+        _oicLiveMonitorTarget.value = null
+        if (!sid.isNullOrBlank()) {
+            viewModelScope.launch(Dispatchers.IO) {
+                repository.endAndCleanupLiveMonitorSession(sid)
+            }
+        }
     }
 
     // --- Live Map, Location History Trails & Emergency SOS ---
@@ -682,11 +927,16 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
     private var lastBreadcrumbLat: Double = 0.0
     private var lastBreadcrumbLng: Double = 0.0
     private var lastBreadcrumbTimeMs: Long = 0L
+    private var lastBreadcrumbHeartbeatMs: Long = 0L
     private var lastBreadcrumbDutyType: String = ""
     private var lastLocalTrailLat: Double = 0.0
     private var lastLocalTrailLng: Double = 0.0
     private var lastLocalTrailTimeMs: Long = 0L
     private var lastLocationFixTimeMs: Long = 0L
+    private var pendingJumpLat: Double = 0.0
+    private var pendingJumpLng: Double = 0.0
+    private var pendingJumpTimeMs: Long = 0L
+    private var lastChatPruneMs: Long = 0L
 
     // --- Team Duty QR Sessions (Strictly scoped per UID & verified against membership) ---
     private val _activeTeamDutyId = MutableStateFlow(
@@ -806,12 +1056,17 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
     // --- Real-time Station Chat Room (OIC + Admin Branch + Officers) ---
     private var baselineChatUid: String? = null
     private val playedChatMessageIds = mutableSetOf<String>()
+    private val _isChatDialogOpen = MutableStateFlow(false)
+    private val _readChatMessageKeys = MutableStateFlow<Set<String>>(emptySet())
     private val _lastReadChatMs = MutableStateFlow(
         auth.currentUser?.uid?.takeIf { it.isNotBlank() }?.let { prefs.getLong(lastReadChatPrefKey(it), 0L) } ?: 0L
     )
 
     private val _stationChatError = MutableStateFlow<String?>(null)
     val stationChatError: StateFlow<String?> = _stationChatError.asStateFlow()
+
+    private val _chatUploadProgress = MutableStateFlow<Float?>(null)
+    val chatUploadProgress: StateFlow<Float?> = _chatUploadProgress.asStateFlow()
 
     @OptIn(ExperimentalCoroutinesApi::class)
     val stationChatMessages: StateFlow<List<StationChatMessage>> = _appUser.flatMapLatest { user ->
@@ -841,23 +1096,59 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
     val unreadChatCount: StateFlow<Int> = combine(
         stationChatMessages,
         _lastReadChatMs,
-        _appUser
-    ) { messages, lastReadMs, user ->
+        _appUser,
+        _isChatDialogOpen,
+        _readChatMessageKeys
+    ) { messages, lastReadMs, user, isOpen, readKeys ->
+        if (isOpen) return@combine 0
         val myUid = user?.uid ?: ""
         val baseline = max(lastReadMs, 0L)
         messages.count { msg ->
-            val time = msg.createdAt?.toDate()?.time ?: msg.createdAtMs
-            msg.senderUid != myUid && time > baseline
+            val time = msg.effectiveTimestampMs()
+            msg.senderUid != myUid && msg.uniqueKey() !in readKeys && time > baseline
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), 0)
 
-    fun markChatAsRead() {
-        val now = System.currentTimeMillis()
-        _lastReadChatMs.value = now
-        val uid = activeOfficerUid.value
-        if (uid.isNotBlank()) {
-            prefs.edit().putLong(lastReadChatPrefKey(uid), now).apply()
+    fun setChatDialogOpen(open: Boolean) {
+        _isChatDialogOpen.value = open
+        markChatAsRead()
+        if (open) {
+            triggerExpiredChatCleanup(force = false)
         }
+    }
+
+    fun markChatAsRead() {
+        val currentMsgs = stationChatMessages.value
+        val maxMsgTs = currentMsgs.maxOfOrNull { it.effectiveTimestampMs() } ?: 0L
+        val readWatermark = maxOf(System.currentTimeMillis(), maxMsgTs)
+        _lastReadChatMs.value = readWatermark
+        if (currentMsgs.isNotEmpty()) {
+            _readChatMessageKeys.value = _readChatMessageKeys.value + currentMsgs.map { it.uniqueKey() }
+        }
+        val uid = activeOfficerUid.value.ifBlank { auth.currentUser?.uid ?: "" }
+        if (uid.isNotBlank()) {
+            prefs.edit().putLong(lastReadChatPrefKey(uid), readWatermark).commit()
+        }
+    }
+
+    fun triggerExpiredChatCleanup(force: Boolean = false) {
+        val user = _appUser.value ?: return
+        val station = user.oicStationCode?.trim().orEmpty()
+        if (station.isBlank() || user.status != "APPROVED") return
+        val now = System.currentTimeMillis()
+        if (!force && (now - lastChatPruneMs) < 10 * 60_000L) return
+        lastChatPruneMs = now
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.pruneExpiredStationChatData(getApplication(), station)
+        }
+    }
+
+    fun getCachedChatAttachmentFile(message: StationChatMessage): File? {
+        return repository.getCachedChatAttachmentFile(getApplication(), message)
+    }
+
+    suspend fun resolveChatAttachmentFile(message: StationChatMessage): Result<File> {
+        return repository.downloadChatAttachmentToCache(getApplication(), message)
     }
 
     fun sendStationChatMessage(
@@ -888,7 +1179,8 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
                 senderRole = user.role,
                 senderRank = user.rank,
                 senderBadge = user.badgeNumber,
-                message = cleanMessage
+                message = cleanMessage,
+                messageType = "TEXT"
             )
             val result = repository.sendStationChatMessage(chatMsg)
             if (result.isSuccess) {
@@ -896,20 +1188,228 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
                 markChatAsRead()
                 onSuccess()
             } else {
-                val ex = result.exceptionOrNull()
-                val firestoreErr = generateSequence(ex) { it.cause }
-                    .filterIsInstance<FirebaseFirestoreException>()
-                    .firstOrNull()
-                val errMsg = when (firestoreErr?.code) {
-                    FirebaseFirestoreException.Code.PERMISSION_DENIED ->
-                        "පණිවිඩ යැවීමට අවසර නොමැත (Firestore Permission Denied)."
-                    FirebaseFirestoreException.Code.UNAVAILABLE ->
-                        "අන්තර්ජාල සම්බන්ධතාවය නොමැත. කරුණාකර පසුව උත්සාහ කරන්න."
-                    else -> ex?.localizedMessage ?: "පණිවිඩය යැවීම අසාර්ථක විය."
-                }
+                val errMsg = resolveChatSendError(result.exceptionOrNull())
                 _userMessage.emit(errMsg)
                 onError(errMsg)
             }
+        }
+    }
+
+    fun sendStationChatVoiceNote(
+        voiceFile: File,
+        durationMs: Long,
+        onSuccess: () -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) {
+        val user = _appUser.value
+        if (user == null || user.uid.isBlank()) {
+            onError("පණිවිඩ යැවීමට කරුණාකර ගිණුමට පුරනය වන්න.")
+            return
+        }
+        val stationCode = user.oicStationCode?.trim().orEmpty()
+        if (stationCode.isBlank()) {
+            onError("ඔබගේ පොලිස් ස්ථාන කේතය හමු නොවීය.")
+            return
+        }
+        viewModelScope.launch {
+            try {
+                _chatUploadProgress.value = 0.05f
+                val bytes = withContext(Dispatchers.IO) { voiceFile.readBytes() }
+                if (!ChatAttachmentUtils.isWithinSizeLimit(bytes.size.toLong())) {
+                    _chatUploadProgress.value = null
+                    onError("හඬ පණිවිඩය 10 MB ට වඩා අඩු විය යුතුය.")
+                    return@launch
+                }
+                val chatMsg = StationChatMessage(
+                    oicStationCode = stationCode,
+                    senderUid = user.uid,
+                    senderName = user.displayName.ifBlank { user.email },
+                    senderRole = user.role,
+                    senderRank = user.rank,
+                    senderBadge = user.badgeNumber,
+                    message = "🎤 හඬ පණිවිඩය (${ChatAttachmentUtils.formatDuration(durationMs)})",
+                    messageType = "AUDIO",
+                    attachmentName = voiceFile.name.ifBlank { "voice_${System.currentTimeMillis()}.m4a" },
+                    attachmentMimeType = "audio/mp4",
+                    attachmentSizeBytes = bytes.size.toLong(),
+                    attachmentDurationMs = durationMs
+                )
+                val result = repository.sendStationChatWithAttachment(
+                    chatMessage = chatMsg,
+                    fileBytes = bytes,
+                    onProgress = { _chatUploadProgress.value = it }
+                )
+                _chatUploadProgress.value = null
+                voiceFile.delete()
+                if (result.isSuccess) {
+                    _stationChatError.value = null
+                    markChatAsRead()
+                    onSuccess()
+                } else {
+                    val errMsg = resolveChatSendError(result.exceptionOrNull())
+                    onError(errMsg)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _chatUploadProgress.value = null
+                onError(resolveChatSendError(e))
+            }
+        }
+    }
+
+    fun sendStationChatAttachmentUri(
+        uri: Uri,
+        captionText: String = "",
+        onSuccess: () -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) {
+        val user = _appUser.value
+        if (user == null || user.uid.isBlank()) {
+            onError("පණිවිඩ යැවීමට කරුණාකර ගිණුමට පුරනය වන්න.")
+            return
+        }
+        val stationCode = user.oicStationCode?.trim().orEmpty()
+        if (stationCode.isBlank()) {
+            onError("ඔබගේ පොලිස් ස්ථාන කේතය හමු නොවීය.")
+            return
+        }
+
+        viewModelScope.launch {
+            try {
+                _chatUploadProgress.value = 0.03f
+                val appCtx = getApplication<Application>()
+                val resolver = appCtx.contentResolver
+                val rawMime = resolver.getType(uri).orEmpty()
+                var fileName = ""
+                var reportedSize = -1L
+                resolver.query(uri, null, null, null, null)?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        val nameIdx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                        val sizeIdx = cursor.getColumnIndex(OpenableColumns.SIZE)
+                        if (nameIdx >= 0) fileName = cursor.getString(nameIdx).orEmpty()
+                        if (sizeIdx >= 0 && !cursor.isNull(sizeIdx)) reportedSize = cursor.getLong(sizeIdx)
+                    }
+                }
+                if (fileName.isBlank()) {
+                    fileName = uri.lastPathSegment?.substringAfterLast('/')?.ifBlank { null }
+                        ?: "file_${System.currentTimeMillis()}"
+                }
+
+                val inferredType = ChatAttachmentUtils.inferMessageType(rawMime, fileName)
+                if (reportedSize > ChatAttachmentUtils.MAX_ATTACHMENT_BYTES && inferredType != "IMAGE") {
+                    _chatUploadProgress.value = null
+                    onError("ගොනුව 10 MB ට වඩා අඩු විය යුතුය (${ChatAttachmentUtils.formatFileSize(reportedSize)}).")
+                    return@launch
+                }
+
+                val rawBytes = withContext(Dispatchers.IO) {
+                    if (inferredType == "IMAGE" && (reportedSize > 3_500_000L || reportedSize <= 0L)) {
+                        // Read up to 25 MB image and optimize cleanly if > 3.5 MB so modern phone photos stay crisp & <10MB
+                        val inputBytes = resolver.openInputStream(uri)?.use { stream ->
+                            val out = ByteArrayOutputStream()
+                            val buf = ByteArray(16 * 1024)
+                            var total = 0L
+                            while (true) {
+                                val read = stream.read(buf)
+                                if (read <= 0) break
+                                total += read
+                                if (total > 25L * 1024L * 1024L) {
+                                    throw IllegalArgumentException("ඡායාරූපය ඉතා විශාලයි (> 25 MB).")
+                                }
+                                out.write(buf, 0, read)
+                            }
+                            out.toByteArray()
+                        } ?: throw IllegalStateException("ඡායාරූපය කියවිය නොහැක.")
+                        if (inputBytes.size <= 3_500_000) {
+                            inputBytes
+                        } else {
+                            val compressed = ImageCompressor.compressImageToTargetMaxBytes(
+                                context = appCtx,
+                                uri = uri,
+                                maxBytes = ChatAttachmentUtils.MAX_ATTACHMENT_BYTES.toInt()
+                            )
+                            compressed ?: inputBytes
+                        }
+                    } else {
+                        resolver.openInputStream(uri)?.use { stream ->
+                            val out = ByteArrayOutputStream()
+                            val buf = ByteArray(16 * 1024)
+                            var total = 0L
+                            while (true) {
+                                val read = stream.read(buf)
+                                if (read <= 0) break
+                                total += read
+                                if (total > ChatAttachmentUtils.MAX_ATTACHMENT_BYTES) {
+                                    throw IllegalArgumentException("ගොනුව 10 MB ට වඩා අඩු විය යුතුය.")
+                                }
+                                out.write(buf, 0, read)
+                            }
+                            out.toByteArray()
+                        } ?: throw IllegalStateException("තෝරාගත් ගොනුව කියවීමට නොහැක.")
+                    }
+                }
+
+                if (!ChatAttachmentUtils.isWithinSizeLimit(rawBytes.size.toLong())) {
+                    _chatUploadProgress.value = null
+                    onError("ගොනුව 10 MB ට වඩා අඩු විය යුතුය (${ChatAttachmentUtils.formatFileSize(rawBytes.size.toLong())}).")
+                    return@launch
+                }
+
+                val finalMime = rawMime.ifBlank {
+                    when (inferredType) {
+                        "PDF" -> "application/pdf"
+                        "IMAGE" -> "image/jpeg"
+                        "AUDIO" -> "audio/mp4"
+                        else -> "application/octet-stream"
+                    }
+                }
+                val chatMsg = StationChatMessage(
+                    oicStationCode = stationCode,
+                    senderUid = user.uid,
+                    senderName = user.displayName.ifBlank { user.email },
+                    senderRole = user.role,
+                    senderRank = user.rank,
+                    senderBadge = user.badgeNumber,
+                    message = captionText.trim(),
+                    messageType = inferredType,
+                    attachmentName = fileName,
+                    attachmentMimeType = finalMime,
+                    attachmentSizeBytes = rawBytes.size.toLong()
+                )
+                val result = repository.sendStationChatWithAttachment(
+                    chatMessage = chatMsg,
+                    fileBytes = rawBytes,
+                    onProgress = { _chatUploadProgress.value = it }
+                )
+                _chatUploadProgress.value = null
+                if (result.isSuccess) {
+                    _stationChatError.value = null
+                    markChatAsRead()
+                    onSuccess()
+                } else {
+                    onError(resolveChatSendError(result.exceptionOrNull()))
+                }
+            } catch (e: CancellationException) {
+                _chatUploadProgress.value = null
+                throw e
+            } catch (e: Exception) {
+                _chatUploadProgress.value = null
+                onError(resolveChatSendError(e))
+            }
+        }
+    }
+
+    private fun resolveChatSendError(ex: Throwable?): String {
+        val firestoreErr = generateSequence(ex) { it.cause }
+            .filterIsInstance<FirebaseFirestoreException>()
+            .firstOrNull()
+        return when (firestoreErr?.code) {
+            FirebaseFirestoreException.Code.PERMISSION_DENIED ->
+                "පණිවිඩ යැවීමට අවසර නොමැත (Firestore Permission Denied)."
+            FirebaseFirestoreException.Code.UNAVAILABLE ->
+                "අන්තර්ජාල සම්බන්ධතාවය නොමැත. කරුණාකර පසුව උත්සාහ කරන්න."
+            else -> ex?.localizedMessage ?: "පණිවිඩය යැවීම අසාර්ථක විය."
         }
     }
 
@@ -1013,14 +1513,26 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
             fetchUserJob = null
             locationJob?.cancel()
             locationJob = null
+            oicAudioPlaybackJob?.cancel()
+            oicAudioPlaybackJob = null
+            _oicLiveMonitorSessionId.value = null
+            _oicLiveMonitorTarget.value = null
+            lastSyncedMediaPermKey = null
             activeTrackingKey = null
             BackgroundLocationService.stop(getApplication())
+            LiveMonitorService.stop(getApplication())
             hydratedUid = null
             _activeTeamDutyId.value = ""
             _lastReadNotifMs.value = 0L
             _lastReadChatMs.value = 0L
+            _readChatMessageKeys.value = emptySet()
+            _isChatDialogOpen.value = false
             baselineChatUid = null
             playedChatMessageIds.clear()
+            pendingJumpTimeMs = 0L
+            lastBreadcrumbTimeMs = 0L
+            lastBreadcrumbHeartbeatMs = 0L
+            lastLocalTrailTimeMs = 0L
             _isAdminPasscodeUnlockedToday.value = false
             _appUser.value = null
             _selectedOfficer.value = null
@@ -1038,19 +1550,21 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
                 val user = _appUser.value ?: return@collect
                 if (baselineChatUid != user.uid) {
                     baselineChatUid = user.uid
-                    list.forEach { msg ->
-                        val key = msg.id.ifBlank { "${msg.senderUid}_${msg.createdAtMs}" }
-                        playedChatMessageIds.add(key)
-                    }
+                    list.forEach { msg -> playedChatMessageIds.add(msg.uniqueKey()) }
+                    return@collect
+                }
+                if (_isChatDialogOpen.value) {
+                    list.forEach { msg -> playedChatMessageIds.add(msg.uniqueKey()) }
+                    markChatAsRead()
                     return@collect
                 }
                 val lastRead = _lastReadChatMs.value
                 var hasNewIncoming = false
                 list.forEach { msg ->
-                    val key = msg.id.ifBlank { "${msg.senderUid}_${msg.createdAtMs}" }
+                    val key = msg.uniqueKey()
                     if (key !in playedChatMessageIds) {
                         playedChatMessageIds.add(key)
-                        val ts = msg.createdAt?.toDate()?.time ?: msg.createdAtMs
+                        val ts = msg.effectiveTimestampMs()
                         if (msg.senderUid != user.uid && ts > lastRead) {
                             hasNewIncoming = true
                         }
@@ -1156,10 +1670,43 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
                 }
             }
         }
+        viewModelScope.launch {
+            combine(incomingMonitorSession, _appUser) { session, user -> Pair(session, user) }
+                .collect { (session, user) ->
+                    val appCtx = getApplication<Application>()
+                    if (user == null || user.role == "OIC" || user.status != "APPROVED") {
+                        if (LiveMonitorService.activeStreamingSessionId.value != null) {
+                            LiveMonitorService.stop(appCtx)
+                        }
+                        return@collect
+                    }
+                    if (session != null && session.status != "ENDED") {
+                        if (!user.isOnDuty) {
+                            LiveMonitorService.stop(appCtx, session.sessionId)
+                            repository.endAndCleanupLiveMonitorSession(session.sessionId)
+                        } else if (session.status == "REQUESTED" &&
+                            LiveMonitorService.activeStreamingSessionId.value != session.sessionId
+                        ) {
+                            LiveMonitorService.start(appCtx, session)
+                        }
+                    } else if (LiveMonitorService.activeStreamingSessionId.value != null) {
+                        LiveMonitorService.stop(appCtx)
+                    }
+                }
+        }
+        viewModelScope.launch {
+            oicLiveMonitorSession.collect { session ->
+                if (session?.status == "ENDED") {
+                    oicAudioPlaybackJob?.cancel()
+                    oicAudioPlaybackJob = null
+                }
+            }
+        }
     }
 
     override fun onCleared() {
         stopRealtimeLocationUpdates()
+        oicAudioPlaybackJob?.cancel()
         super.onCleared()
         auth.removeAuthStateListener(authStateListener)
         fetchUserJob?.cancel()
@@ -1218,7 +1765,9 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
                             _activeTeamDutyId.value = ""
                         }
                         updateLocationTracking(user)
+                        syncMediaPermissions(getApplication())
                         syncFcmTokenAndTopics(user)
+                        triggerExpiredChatCleanup(force = false)
                     } else {
                         clearCachedAppUser()
                         _activeTeamDutyId.value = ""
@@ -1247,7 +1796,7 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
         return hasFine || hasCoarse
     }
 
-    private fun getBestPlatformLastKnownLocation(): android.location.Location? {
+    private fun getBestPlatformLastKnownLocation(preferGpsOnly: Boolean = true): android.location.Location? {
         if (!hasLocationPermission()) return null
         val lm = getApplication<Application>().getSystemService(Context.LOCATION_SERVICE) as? android.location.LocationManager
             ?: return null
@@ -1257,8 +1806,9 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
         ) == android.content.pm.PackageManager.PERMISSION_GRANTED
         val providers = buildList {
             if (hasFine) add(android.location.LocationManager.GPS_PROVIDER)
-            add(android.location.LocationManager.NETWORK_PROVIDER)
-            add(android.location.LocationManager.PASSIVE_PROVIDER)
+            if (!preferGpsOnly) {
+                add(android.location.LocationManager.NETWORK_PROVIDER)
+            }
         }
         val candidates = providers.mapNotNull { provider ->
             try {
@@ -1268,55 +1818,44 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
             } catch (_: Exception) {
                 null
             }
-        }.filter { it.latitude != 0.0 || it.longitude != 0.0 }
+        }.filter { (it.latitude != 0.0 || it.longitude != 0.0) && it.accuracy in 0.1f..60f }
         val now = System.currentTimeMillis()
         return candidates
-            .filter { (now - it.time) <= 30 * 60_000L }
+            .filter { (now - it.time) <= 5 * 60_000L }
             .minWithOrNull(compareBy<android.location.Location> { it.accuracy }.thenByDescending { it.time })
-            ?: candidates.maxByOrNull { it.time }
     }
 
     private suspend fun obtainFreshLocation(): android.location.Location? {
         if (!hasLocationPermission()) return null
 
-        // 1. Instant cached seed so blue dot & accuracy appear immediately (<100ms) while acquiring fresh GPS
         val fusedLast = try {
             fusedLocationClient.lastLocation.await()
         } catch (_: Exception) {
             null
-        }?.takeIf { it.latitude != 0.0 || it.longitude != 0.0 }
-        val platformLast = getBestPlatformLastKnownLocation()
-        val bestCached = listOfNotNull(fusedLast, platformLast)
+        }?.takeIf {
+            (it.latitude != 0.0 || it.longitude != 0.0) &&
+                it.accuracy in 0.1f..55f &&
+                (System.currentTimeMillis() - it.time) <= 120_000L
+        }
+        val gpsLast = getBestPlatformLastKnownLocation(preferGpsOnly = true)
+        val bestCached = listOfNotNull(gpsLast, fusedLast)
             .minWithOrNull(compareBy<android.location.Location> { it.accuracy }.thenByDescending { it.time })
         if (bestCached != null && _myCurrentLocation.value == null) {
             processIncomingLocation(bestCached, overrideIsOnDuty = null, persistToFirestore = false)
         }
 
-        // 2. Request fresh high-accuracy fix
+        // Request fresh true high-accuracy GPS fix
         var loc: android.location.Location? = null
         try {
-            withTimeoutOrNull(5000) {
+            withTimeoutOrNull(6500) {
                 loc = fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null).await()
             }
         } catch (_: Exception) {
-            // ignore
         }
-        if (loc == null || loc!!.accuracy > 65f) {
-            val freshPlatform = getBestPlatformLastKnownLocation()
-            val chosenLast = listOfNotNull(fusedLast, freshPlatform)
-                .filter { (System.currentTimeMillis() - it.time) <= 120_000L }
-                .minByOrNull { it.accuracy }
-            if (chosenLast != null && (loc == null || chosenLast.accuracy < loc!!.accuracy)) {
-                loc = chosenLast
-            }
-        }
-        if (loc == null) {
-            try {
-                withTimeoutOrNull(3500) {
-                    loc = fusedLocationClient.getCurrentLocation(Priority.PRIORITY_BALANCED_POWER_ACCURACY, null).await()
-                }
-            } catch (_: Exception) {
-                // ignore
+        if (loc == null || loc!!.accuracy > 35f) {
+            val freshGps = getBestPlatformLastKnownLocation(preferGpsOnly = true)
+            if (freshGps != null && (loc == null || freshGps.accuracy < loc!!.accuracy)) {
+                loc = freshGps
             }
         }
         val finalLoc = loc ?: bestCached
@@ -1330,19 +1869,59 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
         persistToFirestore: Boolean = true
     ) {
         if (location.latitude == 0.0 && location.longitude == 0.0) return
+        if (!location.hasAccuracy() || location.accuracy <= 0f) return
+
         val nowMs = System.currentTimeMillis()
+        val provider = location.provider?.lowercase(java.util.Locale.US).orEmpty()
+        val isNetworkProvider = provider == android.location.LocationManager.NETWORK_PROVIDER ||
+            provider == android.location.LocationManager.PASSIVE_PROVIDER
+        val fixAgeMs = ((SystemClock.elapsedRealtimeNanos() - location.elapsedRealtimeNanos) / 1_000_000L)
+
         val prevFix = _myCurrentLocation.value
         val prevAcc = _myLocationAccuracyMeters.value
 
-        // Reject noisy cell-tower jumps (> 75m inaccuracy) if we already have a recent accurate fix
-        if (prevFix != null && prevAcc != null && prevAcc <= 35f &&
-            location.accuracy > 75f && (nowMs - lastLocationFixTimeMs) < 90_000L &&
+        // Ignore coarse Wi-Fi/Cell updates when we already have a recent accurate GPS fix
+        if (prevFix != null && prevAcc != null && prevAcc <= 32f &&
+            (location.accuracy > 38f || isNetworkProvider) &&
+            (nowMs - lastLocationFixTimeMs) < 180_000L &&
             overrideIsOnDuty == null
         ) {
             return
         }
 
-        _myCurrentLocation.value = Pair(location.latitude, location.longitude)
+        // Ignore stale cached fixes once we already have an active fix
+        if (prevFix != null && fixAgeMs > 20_000L && overrideIsOnDuty == null) {
+            return
+        }
+
+        // Two-fix confirmation against GPS teleport / multipath spikes (> 65m & > 36 m/s)
+        if (prevFix != null && lastLocationFixTimeMs > 0L && overrideIsOnDuty == null) {
+            val dtSec = ((nowMs - lastLocationFixTimeMs) / 1000.0).coerceAtLeast(1.0)
+            val distFromCurr = GeoRouteUtils.distanceMeters(prevFix.first, prevFix.second, location.latitude, location.longitude)
+            val speedMps = distFromCurr / dtSec
+            if (distFromCurr > 65.0 && speedMps > 36.0) {
+                val confirmedNearPending = pendingJumpTimeMs > 0L &&
+                    (nowMs - pendingJumpTimeMs) <= 20_000L &&
+                    GeoRouteUtils.distanceMeters(pendingJumpLat, pendingJumpLng, location.latitude, location.longitude) <= 35.0
+                if (!confirmedNearPending) {
+                    pendingJumpLat = location.latitude
+                    pendingJumpLng = location.longitude
+                    pendingJumpTimeMs = nowMs
+                    return
+                }
+            }
+            pendingJumpTimeMs = 0L
+        }
+
+        // Smooth blue dot when stationary within GPS jitter circle
+        val requiredBlueDotShift = if (prevFix == null) 0.0 else maxOf(6.0, (location.accuracy * 0.9).coerceAtMost(20.0))
+        val distToPrevDot = if (prevFix == null) Double.MAX_VALUE
+        else GeoRouteUtils.distanceMeters(prevFix.first, prevFix.second, location.latitude, location.longitude)
+        val isDopplerStationaryDot = location.hasSpeed() && location.speed < 0.45f && distToPrevDot < maxOf(14.0, location.accuracy * 1.4)
+
+        if (prevFix == null || (distToPrevDot >= requiredBlueDotShift && !isDopplerStationaryDot) || location.accuracy < (prevAcc ?: 999f)) {
+            _myCurrentLocation.value = Pair(location.latitude, location.longitude)
+        }
         _myLocationAccuracyMeters.value = location.accuracy
         lastLocationFixTimeMs = nowMs
 
@@ -1350,21 +1929,23 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
         val latestDuty = overrideIsOnDuty ?: user.isOnDuty
         val dutyTypeStr = if (latestDuty) "ON_DUTY" else "OFF_DUTY"
         val today = DateTimeUtils.getTodayKey()
+        val cleanStation = user.oicStationCode?.trim()?.uppercase().orEmpty()
 
-        // High-precision local live trail (records tiny movements >= 3 meters cleanly)
+        // Only true high-accuracy GPS points (<= 32m, non-network) may advance patrol trails
+        val isTrueHighAccuracyGps = !isNetworkProvider && location.accuracy <= 32f
         val localMovedMeters = if (lastLocalTrailTimeMs == 0L) Double.MAX_VALUE
         else GeoRouteUtils.distanceMeters(lastLocalTrailLat, lastLocalTrailLng, location.latitude, location.longitude)
+        val requiredTrailMove = maxOf(10.0, (location.accuracy * 1.35).coerceAtMost(28.0))
+        val isDopplerStationary = location.hasSpeed() && location.speed < 0.45f && localMovedMeters < maxOf(16.0, location.accuracy * 1.6)
 
-        val cleanStation = user.oicStationCode?.trim()?.uppercase().orEmpty()
-        val acceptLocalPoint = when {
-            overrideIsOnDuty != null -> true
-            lastLocalTrailTimeMs == 0L -> location.accuracy <= 120f || prevFix == null
-            location.accuracy <= 45f && localMovedMeters >= 3.0 -> true
-            location.accuracy <= 85f && localMovedMeters >= 6.0 -> true
+        val acceptLocalMove = when {
+            overrideIsOnDuty != null && location.accuracy <= 65f -> true
+            lastLocalTrailTimeMs == 0L -> isTrueHighAccuracyGps
+            isTrueHighAccuracyGps && localMovedMeters >= requiredTrailMove && !isDopplerStationary -> true
             else -> false
         }
 
-        if (acceptLocalPoint && user.status == "APPROVED" && !user.pauseLocationLogging) {
+        if (acceptLocalMove && user.status == "APPROVED" && !user.pauseLocationLogging) {
             lastLocalTrailLat = location.latitude
             lastLocalTrailLng = location.longitude
             lastLocalTrailTimeMs = nowMs
@@ -1390,40 +1971,45 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
 
         viewModelScope.launch(Dispatchers.IO) {
             try {
+                val anchorLat = if (lastBreadcrumbTimeMs > 0L && !acceptLocalMove) lastBreadcrumbLat else location.latitude
+                val anchorLng = if (lastBreadcrumbTimeMs > 0L && !acceptLocalMove) lastBreadcrumbLng else location.longitude
+                val movedFromCloudAnchor = if (lastBreadcrumbTimeMs == 0L) Double.MAX_VALUE
+                else GeoRouteUtils.distanceMeters(lastBreadcrumbLat, lastBreadcrumbLng, location.latitude, location.longitude)
+                val cloudMoveThreshold = maxOf(10.0, (location.accuracy * 1.4).coerceAtMost(28.0))
+                val movedMeaningfullyCloud = overrideIsOnDuty != null ||
+                    lastBreadcrumbTimeMs == 0L ||
+                    (isTrueHighAccuracyGps && movedFromCloudAnchor >= cloudMoveThreshold && !isDopplerStationary)
+
                 if (user.role == "OFFICER") {
                     val isExplicitOffDuty = overrideIsOnDuty == false
-                    val distFromLastSaved = if (lastBreadcrumbTimeMs == 0L) Double.MAX_VALUE
-                    else GeoRouteUtils.distanceMeters(lastBreadcrumbLat, lastBreadcrumbLng, location.latitude, location.longitude)
                     val shouldUpdateUserPin = isExplicitOffDuty ||
                         overrideIsOnDuty != null ||
-                        distFromLastSaved >= 4.0 ||
-                        (nowMs - lastBreadcrumbTimeMs) >= 15_000L
-                    if (shouldUpdateUserPin) {
+                        (movedMeaningfullyCloud && isTrueHighAccuracyGps) ||
+                        (lastBreadcrumbTimeMs > 0L && (nowMs - lastBreadcrumbHeartbeatMs) >= 60_000L)
+                    if (shouldUpdateUserPin && (isTrueHighAccuracyGps || overrideIsOnDuty != null)) {
                         repository.updateLastLocation(
                             uid = user.uid,
-                            lat = location.latitude,
-                            lng = location.longitude,
+                            lat = anchorLat,
+                            lng = anchorLng,
                             isOnDuty = latestDuty,
                             recordOffDutySpot = isExplicitOffDuty
                         )
                     }
                 }
 
-                // Record cloud GPS trail breadcrumb (4m fine movement or 25s while On Duty / OIC)
-                val movedMeters = if (lastBreadcrumbTimeMs == 0L) Double.MAX_VALUE
-                else GeoRouteUtils.distanceMeters(lastBreadcrumbLat, lastBreadcrumbLng, location.latitude, location.longitude)
+                // Log cloud trail breadcrumb ONLY on true movement or 90s anchored stay heartbeat (zero stationary jitter!)
                 val throttleElapsed = (nowMs - lastBreadcrumbTimeMs) >= 4_500L
-                val isAccurateForTrail = location.accuracy <= 100f || overrideIsOnDuty != null
-                val shouldLogBreadcrumb = overrideIsOnDuty != null || (
-                    isAccurateForTrail && throttleElapsed &&
-                        (latestDuty || user.role == "OIC") &&
-                        (movedMeters >= 4.0 || (nowMs - lastBreadcrumbTimeMs) >= 25_000L || lastBreadcrumbDutyType != dutyTypeStr)
-                    )
+                val isHeartbeatDue = lastBreadcrumbTimeMs > 0L && (nowMs - lastBreadcrumbHeartbeatMs) >= 90_000L
+                val isTrailActive = (latestDuty || user.role == "OIC")
+                val shouldLogMove = isTrueHighAccuracyGps && throttleElapsed && isTrailActive &&
+                    (movedMeaningfullyCloud || lastBreadcrumbDutyType != dutyTypeStr)
+                val shouldLogStayHeartbeat = !movedMeaningfullyCloud && isTrueHighAccuracyGps && isTrailActive && isHeartbeatDue
 
-                if (shouldLogBreadcrumb) {
+                if (overrideIsOnDuty != null || shouldLogMove) {
                     lastBreadcrumbLat = location.latitude
                     lastBreadcrumbLng = location.longitude
                     lastBreadcrumbTimeMs = nowMs
+                    lastBreadcrumbHeartbeatMs = nowMs
                     lastBreadcrumbDutyType = dutyTypeStr
                     repository.addLocationBreadcrumb(
                         LocationHistoryPoint(
@@ -1440,6 +2026,23 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
                             timestamp = nowMs
                         )
                     )
+                } else if (shouldLogStayHeartbeat) {
+                    lastBreadcrumbHeartbeatMs = nowMs
+                    repository.addLocationBreadcrumb(
+                        LocationHistoryPoint(
+                            officerId = user.uid,
+                            officerName = user.displayName.ifBlank { user.email },
+                            oicStationCode = cleanStation,
+                            dateKey = today,
+                            dayStationKey = "${cleanStation}_$today",
+                            officerDayKey = "${user.uid}_$today",
+                            lat = lastBreadcrumbLat,
+                            lng = lastBreadcrumbLng,
+                            accuracy = location.accuracy,
+                            dutyType = dutyTypeStr,
+                            timestamp = nowMs
+                        )
+                    )
                 }
             } catch (e: Exception) {
                 Log.w("PoliceViewModel", "Error syncing GPS point", e)
@@ -1451,16 +2054,16 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
         if (!hasLocationPermission()) return
 
         if (activeLocationCallback == null) {
-            val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 2500L)
-                .setMinUpdateIntervalMillis(1500L)
-                .setMinUpdateDistanceMeters(2.0f)
-                .setWaitForAccurateLocation(false)
+            val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 3500L)
+                .setMinUpdateIntervalMillis(2000L)
+                .setMinUpdateDistanceMeters(4.0f)
+                .setWaitForAccurateLocation(true)
                 .build()
 
             val callback = object : LocationCallback() {
                 override fun onLocationResult(result: LocationResult) {
                     val best = result.locations
-                        .filter { it.latitude != 0.0 || it.longitude != 0.0 }
+                        .filter { (it.latitude != 0.0 || it.longitude != 0.0) && it.accuracy in 0.1f..45f }
                         .minByOrNull { it.accuracy }
                         ?: result.lastLocation
                         ?: return
@@ -1478,7 +2081,7 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
             }
         }
 
-        // Parallel hardware GPS_PROVIDER listener for devices/emulators where Fused lags
+        // Parallel hardware GPS_PROVIDER listener for true satellite lock
         if (activePlatformLocationListener == null) {
             val hasFine = androidx.core.content.ContextCompat.checkSelfPermission(
                 getApplication(),
@@ -1493,8 +2096,8 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
                     try {
                         lm.requestLocationUpdates(
                             android.location.LocationManager.GPS_PROVIDER,
-                            2000L,
-                            1.5f,
+                            3500L,
+                            4.0f,
                             listener,
                             Looper.getMainLooper()
                         )
@@ -2369,8 +2972,14 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
         fetchUserJob = null
         locationJob?.cancel()
         locationJob = null
+        oicAudioPlaybackJob?.cancel()
+        oicAudioPlaybackJob = null
+        _oicLiveMonitorSessionId.value = null
+        _oicLiveMonitorTarget.value = null
+        lastSyncedMediaPermKey = null
         activeTrackingKey = null
         BackgroundLocationService.stop(getApplication())
+        LiveMonitorService.stop(getApplication())
         hydratedUid = null
         _activeTeamDutyId.value = ""
         _activeEmergencyPopup.value = null

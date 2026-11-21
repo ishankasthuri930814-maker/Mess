@@ -153,7 +153,10 @@ fun OfficerMapDialog(
                         onClearRoute = { viewModel.clearMapRoute() },
                         onResolveEmergency = { viewModel.resolveEmergencyAlert(it) },
                         onRefreshGps = { viewModel.refreshCurrentLocation(showFeedback = true) },
-                        onOpenEmergencySender = onOpenEmergencySender
+                        onOpenEmergencySender = onOpenEmergencySender,
+                        onStartLiveMonitor = if (isOic) { officer ->
+                            viewModel.startOicLiveMonitor(officer)
+                        } else null
                     )
                 }
             }

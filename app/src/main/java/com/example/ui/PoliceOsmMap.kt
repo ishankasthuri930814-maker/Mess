@@ -146,6 +146,7 @@ fun PoliceLiveMapView(
     onRefreshGps: () -> Unit,
     onOpenEmergencySender: (() -> Unit)? = null,
     onExpandFullscreen: (() -> Unit)? = null,
+    onStartLiveMonitor: ((AppUser) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -1131,12 +1132,32 @@ fun PoliceLiveMapView(
                                                 fontWeight = FontWeight.Bold
                                             )
                                         }
+                                        if (onStartLiveMonitor != null && officer.isOnDuty && !officer.hideDutyStatus) {
+                                            val hasAnyPerm = officer.hasCameraPermission || officer.hasMicPermission
+                                            IconButton(
+                                                onClick = { onStartLiveMonitor(officer) },
+                                                modifier = Modifier
+                                                    .size(44.dp)
+                                                    .background(
+                                                        if (hasAnyPerm) Color(0xFFDC2626).copy(alpha = 0.14f)
+                                                        else Color.Gray.copy(alpha = 0.14f),
+                                                        CircleShape
+                                                    )
+                                                    .testTag("map_live_monitor_btn")
+                                            ) {
+                                                Icon(
+                                                    imageVector = if (officer.hasCameraPermission) Icons.Default.Videocam else Icons.Default.Mic,
+                                                    contentDescription = "සජීවී කැමරා / ශ්‍රව්‍ය",
+                                                    tint = if (hasAnyPerm) Color(0xFFDC2626) else Color.Gray
+                                                )
+                                            }
+                                        }
                                     }
                                     if (officer.phoneNumber.isNotBlank()) {
                                         IconButton(
                                             onClick = { dialPhone(officer.phoneNumber) },
                                             modifier = Modifier
-                                                .size(40.dp)
+                                                .size(44.dp)
                                                 .background(PoliceThemeColors.greenText.copy(alpha = 0.15f), CircleShape)
                                         ) {
                                             Icon(Icons.Default.Call, contentDescription = "Call", tint = PoliceThemeColors.greenText)

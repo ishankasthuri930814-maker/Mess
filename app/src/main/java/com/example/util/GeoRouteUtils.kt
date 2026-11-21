@@ -60,15 +60,114 @@ object GeoRouteUtils {
         }
     }
 
+    private const val MAX_PLAUSIBLE_SPEED_MPS = 38.0 // ~137 km/h; filters cell-tower / multipath teleports
+    private const val MAX_TRAIL_ACCURACY_METERS = 38f
+
+    /**
+     * Filters out invalid (0,0) fixes, coarse non-GPS outliers (>38m accuracy when measured),
+     * impossible speed teleports, and isolated out-and-back glitch triangles while
+     * preserving stationary heartbeat timestamps for stay-duration detection.
+     */
+    fun filterAccurateAndDeSpikedPoints(points: List<LocationHistoryPoint>): List<LocationHistoryPoint> {
+        val sorted = points.filter { it.lat != 0.0 || it.lng != 0.0 }.sortedBy { it.timestamp }
+        if (sorted.isEmpty()) return emptyList()
+
+        // If any accurate GPS points exist, drop coarse Wi-Fi/Cell outliers (>38m).
+        // Points with accuracy <= 0f represent legacy/test records where accuracy was omitted.
+        val hasHighAccuracyPts = sorted.any { it.accuracy in 0.1f..MAX_TRAIL_ACCURACY_METERS }
+        val accuracyFiltered = if (hasHighAccuracyPts) {
+            sorted.filter { pt ->
+                pt.accuracy <= 0f ||
+                    pt.accuracy <= MAX_TRAIL_ACCURACY_METERS ||
+                    (pt.dutyType == "OFF_DUTY" && pt.accuracy <= 65f)
+            }.ifEmpty { sorted }
+        } else {
+            sorted
+        }
+
+        if (accuracyFiltered.size <= 2) return accuracyFiltered
+
+        val working = accuracyFiltered.toMutableList()
+        var changed = true
+        var pass = 0
+        while (changed && working.size >= 3 && pass < 5) {
+            changed = false
+            pass++
+            val next = mutableListOf(working.first())
+            var i = 1
+            while (i < working.size - 1) {
+                val prev = next.last()
+                val curr = working[i]
+                val upcoming = working[i + 1]
+
+                val dPrevCurr = distanceMeters(prev.lat, prev.lng, curr.lat, curr.lng)
+                val dtPrevCurr = ((curr.timestamp - prev.timestamp) / 1000.0).coerceAtLeast(1.0)
+                val speedPrevCurr = dPrevCurr / dtPrevCurr
+
+                val dCurrNext = distanceMeters(curr.lat, curr.lng, upcoming.lat, upcoming.lng)
+                val dPrevNext = distanceMeters(prev.lat, prev.lng, upcoming.lat, upcoming.lng)
+
+                val isSpeedTeleport = dPrevCurr > 50.0 && speedPrevCurr > MAX_PLAUSIBLE_SPEED_MPS
+                val isOutAndBackSpike = dPrevCurr > 60.0 &&
+                    dCurrNext > 60.0 &&
+                    dPrevNext < minOf(dPrevCurr, dCurrNext) * 0.45
+
+                if (isSpeedTeleport || isOutAndBackSpike) {
+                    changed = true
+                } else {
+                    next.add(curr)
+                }
+                i++
+            }
+            val tail = working.last()
+            val prevBeforeTail = next.last()
+            val tailDist = distanceMeters(prevBeforeTail.lat, prevBeforeTail.lng, tail.lat, tail.lng)
+            val tailDt = ((tail.timestamp - prevBeforeTail.timestamp) / 1000.0).coerceAtLeast(1.0)
+            if (tailDist <= 50.0 || (tailDist / tailDt) <= MAX_PLAUSIBLE_SPEED_MPS || tail.dutyType == "OFF_DUTY") {
+                next.add(tail)
+            } else {
+                changed = true
+            }
+            working.clear()
+            working.addAll(next)
+        }
+        return working
+    }
+
+    /**
+     * Produces a clean, jitter-collapsed path of points for accurate distance calculation and polyline rendering.
+     */
+    fun sanitizeTrailPoints(points: List<LocationHistoryPoint>): List<LocationHistoryPoint> {
+        val clean = filterAccurateAndDeSpikedPoints(points)
+        if (clean.size <= 1) return clean
+
+        val collapsed = mutableListOf(clean.first())
+        for (i in 1 until clean.size) {
+            val prev = collapsed.last()
+            val curr = clean[i]
+            val dist = distanceMeters(prev.lat, prev.lng, curr.lat, curr.lng)
+            val minRealStep = if (prev.accuracy > 0f || curr.accuracy > 0f) {
+                maxOf(4.0, (maxOf(prev.accuracy, curr.accuracy) * 0.75))
+            } else {
+                1.5
+            }
+            if (dist >= minRealStep || curr.dutyType == "OFF_DUTY") {
+                collapsed.add(curr)
+            }
+        }
+        return collapsed
+    }
+
     fun computePolylineDistanceMeters(points: List<LocationHistoryPoint>): Double {
-        val valid = points.filter { it.lat != 0.0 || it.lng != 0.0 }.sortedBy { it.timestamp }
-        if (valid.size < 2) return 0.0
+        val clean = sanitizeTrailPoints(points)
+        if (clean.size < 2) return 0.0
         var total = 0.0
-        for (i in 1 until valid.size) {
-            val prev = valid[i - 1]
-            val curr = valid[i]
+        for (i in 1 until clean.size) {
+            val prev = clean[i - 1]
+            val curr = clean[i]
             val step = distanceMeters(prev.lat, prev.lng, curr.lat, curr.lng)
-            if (step >= 1.5 && step <= 10_000.0) {
+            val dtSec = ((curr.timestamp - prev.timestamp) / 1000.0).coerceAtLeast(1.0)
+            if (step >= 1.5 && step <= 10_000.0 && (step <= 50.0 || (step / dtSec) <= MAX_PLAUSIBLE_SPEED_MPS)) {
                 total += step
             }
         }
@@ -79,37 +178,15 @@ object GeoRouteUtils {
      * Filters GPS spikes/jitter and applies Chaikin corner smoothing so travel trails render smoothly.
      */
     fun filterAndSmoothTrail(points: List<LocationHistoryPoint>): List<Pair<Double, Double>> {
-        val sorted = points.filter { it.lat != 0.0 || it.lng != 0.0 }.sortedBy { it.timestamp }
-        if (sorted.size <= 2) {
-            return sorted.map { Pair(it.lat, it.lng) }
-        }
-
-        // 1. De-noise impossible speed spikes & sub-2m jitter while keeping endpoints
-        val clean = mutableListOf(sorted.first())
-        for (i in 1 until sorted.size - 1) {
-            val prev = clean.last()
-            val curr = sorted[i]
-            val dist = distanceMeters(prev.lat, prev.lng, curr.lat, curr.lng)
-            val dtSec = ((curr.timestamp - prev.timestamp) / 1000.0).coerceAtLeast(1.0)
-            val speedMps = dist / dtSec
-            // Reject implausible teleport (> 65 m/s = 234 km/h) or tiny noise (< 2.0 m)
-            if (dist >= 2.0 && speedMps <= 65.0) {
-                clean.add(curr)
-            }
-        }
-        val last = sorted.last()
-        if (clean.last().lat != last.lat || clean.last().lng != last.lng) {
-            val tailDist = distanceMeters(clean.last().lat, clean.last().lng, last.lat, last.lng)
-            val tailDtSec = ((last.timestamp - clean.last().timestamp) / 1000.0).coerceAtLeast(1.0)
-            if (tailDist / tailDtSec <= 65.0) {
-                clean.add(last)
-            }
+        val clean = sanitizeTrailPoints(points)
+        if (clean.size <= 2) {
+            return clean.map { Pair(it.lat, it.lng) }
         }
 
         var coords = clean.map { Pair(it.lat, it.lng) }
         if (coords.size < 3) return coords
 
-        // 2. Apply 2 passes of Chaikin corner-cutting for smooth road curves (break if huge segment jump > 250m)
+        // Apply 2 passes of Chaikin corner-cutting for smooth road curves (break if huge segment jump > 250m)
         repeat(2) {
             val smoothed = ArrayList<Pair<Double, Double>>(coords.size * 2)
             smoothed.add(coords.first())
@@ -178,7 +255,7 @@ object GeoRouteUtils {
         radiusMeters: Double = 55.0,
         minDurationMs: Long = 90_000L // 1.5 minutes
     ): List<StayLocation> {
-        val valid = points.filter { it.lat != 0.0 || it.lng != 0.0 }.sortedBy { it.timestamp }
+        val valid = filterAccurateAndDeSpikedPoints(points)
         if (valid.isEmpty()) return emptyList()
 
         val stays = mutableListOf<StayLocation>()

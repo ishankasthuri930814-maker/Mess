@@ -120,6 +120,40 @@ object ImageCompressor {
             }
         }
 
+    suspend fun compressImageToTargetMaxBytes(
+        context: Context,
+        uri: Uri,
+        maxBytes: Int
+    ): ByteArray? = withContext(Dispatchers.IO) {
+        try {
+            val resolver = context.contentResolver
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return@withContext null
+
+            var sampleSize = 1
+            val maxDim = max(bounds.outWidth, bounds.outHeight)
+            while (maxDim / (sampleSize * 2) >= 1600) {
+                sampleSize *= 2
+            }
+            val decodeOpts = BitmapFactory.Options().apply { inSampleSize = sampleSize }
+            val rawBmp = resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, decodeOpts) }
+                ?: return@withContext null
+            val rotated = rotateBitmap(rawBmp, getOrientation(context, uri))
+            var quality = 85
+            val baos = java.io.ByteArrayOutputStream()
+            do {
+                baos.reset()
+                rotated.compress(Bitmap.CompressFormat.JPEG, quality, baos)
+                quality -= 10
+            } while (baos.size() > maxBytes && quality >= 35)
+            rotated.recycle()
+            baos.toByteArray()
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     private fun getOrientation(context: Context, uri: Uri): Int {
         return try {
             context.contentResolver.openInputStream(uri)?.use { input: InputStream ->

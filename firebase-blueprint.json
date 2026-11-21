@@ -22,6 +22,8 @@
             "hiddenOnMap": "boolean",
             "pauseLocationLogging": "boolean",
             "hideDutyStatus": "boolean",
+            "hasCameraPermission": "boolean",
+            "hasMicPermission": "boolean",
             "lastLocation": "map",
             "lastOffDutyLocation": "map",
             "updatedAt": "timestamp"
@@ -205,8 +207,90 @@
             "senderRank": "string",
             "senderBadge": "string",
             "message": "string",
+            "messageType": "string",
+            "attachmentName": "string",
+            "attachmentMimeType": "string",
+            "attachmentSizeBytes": "number",
+            "attachmentDurationMs": "number",
+            "attachmentChunkCount": "number",
+            "expiresAtMs": "number",
             "createdAtMs": "number",
             "createdAt": "timestamp"
+          },
+          "subcollections": {
+            "chunks": {
+              "documents": {
+                "{chunkIndex}": {
+                  "fields": {
+                    "chunkIndex": "number",
+                    "oicStationCode": "string",
+                    "senderUid": "string",
+                    "expiresAtMs": "number",
+                    "data": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "live_monitors": {
+      "documents": {
+        "{sessionId}": {
+          "fields": {
+            "sessionId": "string",
+            "oicStationCode": "string",
+            "oicUid": "string",
+            "oicName": "string",
+            "officerUid": "string",
+            "officerName": "string",
+            "status": "string",
+            "requestedCamera": "boolean",
+            "requestedAudio": "boolean",
+            "cameraActive": "boolean",
+            "micActive": "boolean",
+            "lensFacing": "string",
+            "createdAtMs": "number",
+            "updatedAtMs": "number",
+            "expiresAtMs": "number",
+            "createdAt": "timestamp"
+          },
+          "subcollections": {
+            "video_slots": {
+              "documents": {
+                "{slotId}": {
+                  "fields": {
+                    "slotIndex": "number",
+                    "seq": "number",
+                    "jpegBase64": "string",
+                    "width": "number",
+                    "height": "number",
+                    "timestampMs": "number",
+                    "officerUid": "string",
+                    "oicUid": "string",
+                    "oicStationCode": "string"
+                  }
+                }
+              }
+            },
+            "audio_chunks": {
+              "documents": {
+                "{slotId}": {
+                  "fields": {
+                    "slotIndex": "number",
+                    "seq": "number",
+                    "adpcmBase64": "string",
+                    "sampleRate": "number",
+                    "sampleCount": "number",
+                    "timestampMs": "number",
+                    "officerUid": "string",
+                    "oicUid": "string",
+                    "oicStationCode": "string"
+                  }
+                }
+              }
+            }
           }
         }
       }

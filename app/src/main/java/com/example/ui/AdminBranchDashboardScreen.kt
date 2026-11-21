@@ -76,7 +76,20 @@ fun AdminBranchDashboardScreen(
     val notifications by viewModel.notifications.collectAsStateWithLifecycle()
     val unreadNotifCount by viewModel.unreadNotificationCount.collectAsStateWithLifecycle()
     val unreadChatCount by viewModel.unreadChatCount.collectAsStateWithLifecycle()
+    val incomingMonitorSession by viewModel.incomingMonitorSession.collectAsStateWithLifecycle()
+    val activeStreamingSessionId by com.example.streaming.LiveMonitorService.activeStreamingSessionId.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
+
+    LaunchedEffect(incomingMonitorSession?.sessionId, incomingMonitorSession?.status, appUser?.isOnDuty) {
+        val sess = incomingMonitorSession
+        if (sess != null &&
+            appUser?.isOnDuty == true &&
+            (sess.status == "REQUESTED" || sess.status == "NEEDS_FOREGROUND") &&
+            activeStreamingSessionId != sess.sessionId
+        ) {
+            viewModel.activatePendingLiveMonitorFromForeground(context)
+        }
+    }
 
     var selectedTab by remember { mutableIntStateOf(0) }
     var enteredPasscode by remember { mutableStateOf("") }
@@ -450,6 +463,66 @@ fun AdminBranchDashboardScreen(
                 .padding(padding)
                 .background(MaterialTheme.colorScheme.background)
         ) {
+            val activeMonitor = incomingMonitorSession
+            if (activeMonitor != null && activeMonitor.status != "ENDED" && appUser?.isOnDuty == true) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 6.dp)
+                        .testTag("admin_live_monitor_active_banner"),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF991B1B)),
+                    border = BorderStroke(1.dp, Color(0xFFFCA5A5).copy(alpha = 0.6f))
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Videocam,
+                            contentDescription = "Live Monitoring Active",
+                            tint = Color.White,
+                            modifier = Modifier.size(22.dp)
+                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "🔴 OIC සජීවී නිරීක්ෂණය ක්‍රියාත්මකයි",
+                                color = Color.White,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                            Text(
+                                text = when {
+                                    activeMonitor.status == "NEEDS_FOREGROUND" -> "සජීවී සම්බන්ධතාවය සූදානම් වෙමින් පවතී..."
+                                    activeMonitor.requestedCamera && activeMonitor.requestedAudio -> "කැමරාව සහ ශ්‍රව්‍ය විකාශනය වේ"
+                                    activeMonitor.requestedCamera -> "කැමරාව විකාශනය වේ"
+                                    else -> "ශ්‍රව්‍ය විකාශනය වේ"
+                                },
+                                color = Color(0xFFFEE2E2),
+                                fontSize = 11.sp
+                            )
+                        }
+                        Button(
+                            onClick = { viewModel.stopOutgoingLiveMonitorByOfficer(context) },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color.White,
+                                contentColor = Color(0xFF991B1B)
+                            ),
+                            shape = RoundedCornerShape(10.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                            modifier = Modifier.testTag("admin_stop_live_monitor_btn")
+                        ) {
+                            Icon(Icons.Default.Stop, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("නවත්වන්න", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+
             if (emergencyAlerts.isNotEmpty()) {
                 EmergencySosBanner(
                     alerts = emergencyAlerts,

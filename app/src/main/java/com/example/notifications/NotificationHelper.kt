@@ -143,4 +143,71 @@ object NotificationHelper {
             // Ignore
         }
     }
+
+    fun showLiveMonitorRequestNotification(
+        context: Context,
+        sessionId: String,
+        oicName: String,
+        requestedCamera: Boolean,
+        requestedAudio: Boolean
+    ) {
+        createNotificationChannels(context)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            if (manager.getNotificationChannel(CHANNEL_ID_LIVE_MONITOR) == null) {
+                val ch = NotificationChannel(
+                    CHANNEL_ID_LIVE_MONITOR,
+                    "සජීවී OIC කැමරා / ශ්‍රව්‍ය නිරීක්ෂණය",
+                    NotificationManager.IMPORTANCE_HIGH
+                ).apply {
+                    description = "OIC විසින් සජීවී කැමරා සහ ශ්‍රව්‍ය නිරීක්ෂණය ඉල්ලූ විට දැනුම් දෙයි"
+                    enableVibration(true)
+                }
+                manager.createNotificationChannel(ch)
+            }
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val granted = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!granted) return
+        }
+
+        val notifId = ("live_req_$sessionId").hashCode()
+        val intent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra("open_live_monitor_session_id", sessionId)
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            context,
+            notifId,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val mediaDesc = when {
+            requestedCamera && requestedAudio -> "සජීවී කැමරාව සහ ශ්‍රව්‍ය"
+            requestedCamera -> "සජීවී කැමරාව"
+            else -> "සජීවී ශ්‍රව්‍ය"
+        }
+        val body = "${oicName.ifBlank { "OIC" }} විසින් ඔබගේ $mediaDesc සජීවී නිරීක්ෂණය ඉල්ලා ඇත. සක්‍රීය කිරීමට මෙය ඔබන්න."
+        val builder = NotificationCompat.Builder(context, CHANNEL_ID_LIVE_MONITOR)
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setContentTitle("📹 OIC සජීවී නිරීක්ෂණ ඉල්ලීම")
+            .setContentText(body)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+            .setPriority(NotificationCompat.PRIORITY_MAX)
+            .setCategory(NotificationCompat.CATEGORY_CALL)
+            .setAutoCancel(true)
+            .setContentIntent(pendingIntent)
+
+        try {
+            NotificationManagerCompat.from(context).notify(notifId, builder.build())
+        } catch (_: SecurityException) {
+            // Ignore
+        }
+    }
+
+    const val CHANNEL_ID_LIVE_MONITOR = "police_live_monitor_req_channel"
 }

@@ -37,6 +37,12 @@ data class AppUser(
     @get:PropertyName("hideDutyStatus")
     @field:PropertyName("hideDutyStatus")
     val hideDutyStatus: Boolean = false,
+    @get:PropertyName("hasCameraPermission")
+    @field:PropertyName("hasCameraPermission")
+    val hasCameraPermission: Boolean = false,
+    @get:PropertyName("hasMicPermission")
+    @field:PropertyName("hasMicPermission")
+    val hasMicPermission: Boolean = false,
     val lastLocation: Map<String, Any>? = null,
     val lastOffDutyLocation: Map<String, Any>? = null,
     val adminSecretSeed: String = "",

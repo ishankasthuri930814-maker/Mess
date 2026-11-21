@@ -17,6 +17,7 @@ import androidx.activity.viewModels
 import androidx.core.content.ContextCompat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -46,6 +47,8 @@ import androidx.compose.material.icons.filled.Restaurant
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.Warning
 import com.example.ui.ExportReportDialog
 import androidx.compose.material3.Button
@@ -139,6 +142,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 import com.example.location.BackgroundLocationService
+import com.example.streaming.LiveMonitorService
 import com.example.ui.AdminBranchLoginScreen
 import com.example.ui.AdminBranchRegistrationScreen
 import com.example.ui.AdminBranchDashboardScreen
@@ -146,7 +150,11 @@ import com.example.ui.ChatTopBarButton
 import com.example.ui.LatestInAppNoticeBanner
 import com.example.ui.StationChatDialog
 import com.example.data.DutyAssignment
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.TextButton
@@ -242,6 +250,10 @@ class MainActivity : ComponentActivity() {
             intent.removeExtra("open_sos_lat")
             intent.removeExtra("open_sos_lng")
         }
+        if (intent.hasExtra("open_live_monitor_session_id")) {
+            viewModel.activatePendingLiveMonitorFromForeground(this)
+            intent.removeExtra("open_live_monitor_session_id")
+        }
     }
 }
 
@@ -262,6 +274,8 @@ fun MainPoliceApp(viewModel: PoliceViewModel, isDarkTheme: Boolean) {
             when (event) {
                 Lifecycle.Event.ON_RESUME -> {
                     viewModel.syncLocationTrackingOnLifecycle()
+                    viewModel.syncMediaPermissions(rootContext)
+                    viewModel.activatePendingLiveMonitorFromForeground(rootContext)
                 }
                 Lifecycle.Event.ON_STOP -> {
                     val u = appUser
@@ -587,11 +601,20 @@ fun MainPoliceApp(viewModel: PoliceViewModel, isDarkTheme: Boolean) {
     val activeEmergencyPopup by viewModel.activeEmergencyPopup.collectAsStateWithLifecycle()
     val isRouteMapDialogOpen by viewModel.isRouteMapDialogOpen.collectAsStateWithLifecycle()
     val stationActiveSingleSlotHolders by viewModel.stationActiveSingleSlotHolders.collectAsStateWithLifecycle()
+    val incomingMonitorSession by viewModel.incomingMonitorSession.collectAsStateWithLifecycle()
+    val activeStreamingSessionId by LiveMonitorService.activeStreamingSessionId.collectAsStateWithLifecycle()
     val isOnDuty = appUser?.isOnDuty ?: (latestShift?.type == "ON_DUTY")
 
-    val notificationPermissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
-    ) { /* Permission granted or denied gracefully */ }
+    LaunchedEffect(incomingMonitorSession?.sessionId, incomingMonitorSession?.status, isOnDuty) {
+        val sess = incomingMonitorSession
+        if (sess != null &&
+            isOnDuty &&
+            (sess.status == "REQUESTED" || sess.status == "NEEDS_FOREGROUND") &&
+            activeStreamingSessionId != sess.sessionId
+        ) {
+            viewModel.activatePendingLiveMonitorFromForeground(context)
+        }
+    }
 
     val backgroundLocationLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
@@ -601,12 +624,14 @@ fun MainPoliceApp(viewModel: PoliceViewModel, isDarkTheme: Boolean) {
         }
     }
 
-    val locationPermissionLauncher = rememberLauncherForActivityResult(
+    val startupPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
-        val granted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
-                permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
-        if (granted) {
+        viewModel.syncMediaPermissions(context)
+        val locGranted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+            permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true ||
+            BackgroundLocationService.hasForegroundLocationPermission(context)
+        if (locGranted) {
             viewModel.refreshCurrentLocation()
             if (isOnDuty &&
                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
@@ -622,31 +647,37 @@ fun MainPoliceApp(viewModel: PoliceViewModel, isDarkTheme: Boolean) {
     }
 
     LaunchedEffect(Unit) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            val hasNotifPerm = ContextCompat.checkSelfPermission(
-                context,
-                Manifest.permission.POST_NOTIFICATIONS
-            ) == PackageManager.PERMISSION_GRANTED
-            if (!hasNotifPerm) {
-                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        viewModel.syncMediaPermissions(context)
+
+        val missingPermissions = buildList {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+            ) {
+                add(Manifest.permission.POST_NOTIFICATIONS)
+            }
+            val hasFine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+            val hasCoarse = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+            if (!hasFine && !hasCoarse) {
+                add(Manifest.permission.ACCESS_FINE_LOCATION)
+                add(Manifest.permission.ACCESS_COARSE_LOCATION)
+            } else {
+                viewModel.refreshCurrentLocation()
+            }
+            if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+                add(Manifest.permission.CAMERA)
+            }
+            if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                add(Manifest.permission.RECORD_AUDIO)
             }
         }
 
-        val hasFine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
-        val hasCoarse = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
-        if (!hasFine && !hasCoarse) {
-            locationPermissionLauncher.launch(
-                arrayOf(
-                    Manifest.permission.ACCESS_FINE_LOCATION,
-                    Manifest.permission.ACCESS_COARSE_LOCATION
-                )
-            )
-        } else {
-            viewModel.refreshCurrentLocation()
+        if (missingPermissions.isNotEmpty()) {
+            startupPermissionLauncher.launch(missingPermissions.toTypedArray())
         }
     }
 
     LaunchedEffect(isOnDuty) {
+        viewModel.syncMediaPermissions(context)
         if (isOnDuty && BackgroundLocationService.hasForegroundLocationPermission(context)) {
             BackgroundLocationService.startIfAllowed(context, appUser)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
@@ -897,6 +928,68 @@ fun MainPoliceApp(viewModel: PoliceViewModel, isDarkTheme: Boolean) {
                 .padding(innerPadding)
                 .background(MaterialTheme.colorScheme.background)
         ) {
+            val activeMonitor = incomingMonitorSession
+            if (activeMonitor != null && activeMonitor.status != "ENDED" && isOnDuty) {
+                val streamModeText = when {
+                    activeMonitor.status == "NEEDS_FOREGROUND" -> "සජීවී සම්බන්ධතාවය සූදානම් වෙමින් පවතී..."
+                    activeMonitor.requestedCamera && activeMonitor.requestedAudio -> "කැමරාව සහ ශ්‍රව්‍ය විකාශනය වේ"
+                    activeMonitor.requestedCamera -> "කැමරාව විකාශනය වේ"
+                    activeMonitor.requestedAudio -> "ශ්‍රව්‍ය විකාශනය වේ"
+                    else -> "නිරීක්ෂණය සක්‍රීයයි"
+                }
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                        .testTag("officer_live_monitor_active_banner"),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF991B1B)),
+                    border = BorderStroke(1.dp, Color(0xFFFCA5A5).copy(alpha = 0.6f))
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Videocam,
+                            contentDescription = "Live Monitoring Active",
+                            tint = Color.White,
+                            modifier = Modifier.size(22.dp)
+                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "🔴 OIC සජීවී නිරීක්ෂණය ක්‍රියාත්මකයි",
+                                color = Color.White,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                            Text(
+                                text = streamModeText,
+                                color = Color(0xFFFEE2E2),
+                                fontSize = 11.sp
+                            )
+                        }
+                        Button(
+                            onClick = { viewModel.stopOutgoingLiveMonitorByOfficer(context) },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color.White,
+                                contentColor = Color(0xFF991B1B)
+                            ),
+                            shape = RoundedCornerShape(10.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                            modifier = Modifier.testTag("officer_stop_live_monitor_btn")
+                        ) {
+                            Icon(Icons.Default.Stop, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("නවත්වන්න", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+
             if (nearbyEmergencyAlerts.isNotEmpty()) {
                 EmergencySosBanner(
                     alerts = nearbyEmergencyAlerts,

@@ -106,4 +106,30 @@ class GeoRouteUtilsTest {
         assertTrue("Expected ~15.0m for short walk, got $totalMeters", totalMeters in 13.0..17.5)
         assertEquals(0.0, GeoRouteUtils.computePolylineDistanceMeters(points.take(1)), 0.01)
     }
+
+    @Test
+    fun computePolylineDistanceMeters_returnsZeroForStationaryGpsWobbleAndSpikes() {
+        val t0 = 1_700_000_000_000L
+        // Stationary officer standing at junction with ±8m..±14m GPS wobble and a 1.5km cell jump + coarse 90m outlier
+        val stationaryPoints = listOf(
+            LocationHistoryPoint(id = "s1", officerId = "o1", lat = 6.927100, lng = 79.861200, accuracy = 8f, timestamp = t0),
+            // 5m wobble inside uncertainty circle
+            LocationHistoryPoint(id = "s2", officerId = "o1", lat = 6.927145, lng = 79.861210, accuracy = 12f, timestamp = t0 + 10_000L),
+            // Coarse Wi-Fi/Cell fix (accuracy 95m) 1.5 km away
+            LocationHistoryPoint(id = "outlier", officerId = "o1", lat = 6.940000, lng = 79.870000, accuracy = 95f, timestamp = t0 + 20_000L),
+            // Returns to same stationary junction with 10m wobble
+            LocationHistoryPoint(id = "s3", officerId = "o1", lat = 6.927120, lng = 79.861225, accuracy = 10f, timestamp = t0 + 30_000L),
+            // Isolated out-and-back multipath bounce 250m away even with nominal 15m accuracy
+            LocationHistoryPoint(id = "bounce", officerId = "o1", lat = 6.929350, lng = 79.861200, accuracy = 15f, timestamp = t0 + 80_000L),
+            // Anchored 25-min stay heartbeat at same spot
+            LocationHistoryPoint(id = "s4", officerId = "o1", lat = 6.927105, lng = 79.861205, accuracy = 6f, timestamp = t0 + 25 * 60_000L)
+        )
+
+        val dist = GeoRouteUtils.computePolylineDistanceMeters(stationaryPoints)
+        assertEquals("Stationary officer must report 0m travel distance", 0.0, dist, 0.01)
+
+        val stays = GeoRouteUtils.extractStayLocations(stationaryPoints)
+        assertEquals(1, stays.size)
+        assertEquals(25L, stays.first().durationMinutes)
+    }
 }

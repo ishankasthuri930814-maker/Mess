@@ -10,13 +10,16 @@ import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 
+import android.util.Base64
 import android.util.Log
+import com.example.util.ChatAttachmentUtils
 import com.google.firebase.Firebase
 import com.google.firebase.auth.auth
 import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.snapshots
+import java.io.FileOutputStream
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.catch
@@ -59,13 +62,17 @@ class PoliceRepository(
                 val hiddenMap = snapshot.getBoolean("hiddenOnMap") ?: user.hiddenOnMap
                 val pauseLog = snapshot.getBoolean("pauseLocationLogging") ?: user.pauseLocationLogging
                 val hideDuty = snapshot.getBoolean("hideDutyStatus") ?: user.hideDutyStatus
+                val hasCam = snapshot.getBoolean("hasCameraPermission") ?: user.hasCameraPermission
+                val hasMic = snapshot.getBoolean("hasMicPermission") ?: user.hasMicPermission
                 user.copy(
                     uid = if (user.uid.isBlank()) snapshot.id else user.uid,
                     isOnDuty = explicitOnDuty,
                     hiddenFromStationLists = hiddenLists,
                     hiddenOnMap = hiddenMap,
                     pauseLocationLogging = pauseLog,
-                    hideDutyStatus = hideDuty
+                    hideDutyStatus = hideDuty,
+                    hasCameraPermission = hasCam,
+                    hasMicPermission = hasMic
                 )
             }
         }
@@ -88,12 +95,31 @@ class PoliceRepository(
             "hiddenOnMap" to user.hiddenOnMap,
             "pauseLocationLogging" to user.pauseLocationLogging,
             "hideDutyStatus" to user.hideDutyStatus,
+            "hasCameraPermission" to user.hasCameraPermission,
+            "hasMicPermission" to user.hasMicPermission,
             "adminSecretSeed" to user.adminSecretSeed,
             "updatedAt" to FieldValue.serverTimestamp()
         )
         user.oicStationCode?.let { payload["oicStationCode"] = it }
         user.lastLocation?.let { payload["lastLocation"] = it }
         db.collection("users").document(user.uid).set(payload).await()
+    }
+
+    suspend fun updateMediaPermissions(uid: String, hasCamera: Boolean, hasMic: Boolean) {
+        if (uid.isBlank()) return
+        try {
+            db.collection("users").document(uid).update(
+                mapOf(
+                    "hasCameraPermission" to hasCamera,
+                    "hasMicPermission" to hasMic,
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+            ).await()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w("PoliceRepository", "Failed updating camera/mic permission flags", e)
+        }
     }
 
     suspend fun updateOfficerFullProfile(
@@ -146,13 +172,17 @@ class PoliceRepository(
                     val hiddenMap = doc.getBoolean("hiddenOnMap") ?: user.hiddenOnMap
                     val pauseLog = doc.getBoolean("pauseLocationLogging") ?: user.pauseLocationLogging
                     val hideDuty = doc.getBoolean("hideDutyStatus") ?: user.hideDutyStatus
+                    val hasCam = doc.getBoolean("hasCameraPermission") ?: user.hasCameraPermission
+                    val hasMic = doc.getBoolean("hasMicPermission") ?: user.hasMicPermission
                     user.copy(
                         uid = if (user.uid.isBlank()) doc.id else user.uid,
                         isOnDuty = explicitOnDuty,
                         hiddenFromStationLists = hiddenLists,
                         hiddenOnMap = hiddenMap,
                         pauseLocationLogging = pauseLog,
-                        hideDutyStatus = hideDuty
+                        hideDutyStatus = hideDuty,
+                        hasCameraPermission = hasCam,
+                        hasMicPermission = hasMic
                     )
                 }
             }.filter { it.role == "OFFICER" || it.role == "ADMIN_BRANCH" }
@@ -246,9 +276,13 @@ class PoliceRepository(
                 snapshot.documents.mapNotNull { doc ->
                     doc.toObject(AppUser::class.java)?.let { user ->
                         val explicitOnDuty = doc.getBoolean("isOnDuty") ?: user.isOnDuty
+                        val hasCam = doc.getBoolean("hasCameraPermission") ?: user.hasCameraPermission
+                        val hasMic = doc.getBoolean("hasMicPermission") ?: user.hasMicPermission
                         user.copy(
                             uid = if (user.uid.isBlank()) doc.id else user.uid,
-                            isOnDuty = explicitOnDuty
+                            isOnDuty = explicitOnDuty,
+                            hasCameraPermission = hasCam,
+                            hasMicPermission = hasMic
                         )
                     }
                 }
@@ -856,7 +890,7 @@ class PoliceRepository(
             }
     }
 
-    // --- Real-Time Station Chat Room ---
+    // --- Real-Time Station Chat Room (with <10MB Chunked Cloud Storage & 48h Auto-Retention) ---
     fun observeStationChatMessages(oicStationCode: String): Flow<List<StationChatMessage>> {
         val cleanStation = oicStationCode.trim().uppercase().take(64)
         if (cleanStation.isBlank()) return flowOf(emptyList())
@@ -864,8 +898,16 @@ class PoliceRepository(
             .whereEqualTo("oicStationCode", cleanStation)
             .snapshots()
             .map { snapshot ->
+                val nowMs = System.currentTimeMillis()
                 snapshot.toObjects(StationChatMessage::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
-                    .sortedBy { it.createdAt?.toDate()?.time ?: it.createdAtMs }
+                    .filter { msg ->
+                        !ChatAttachmentUtils.isExpired(
+                            createdAtMs = msg.effectiveTimestampMs(),
+                            expiresAtMs = msg.expiresAtMs,
+                            nowMs = nowMs
+                        )
+                    }
+                    .sortedBy { it.effectiveTimestampMs() }
             }
     }
 
@@ -883,6 +925,7 @@ class PoliceRepository(
             return Result.failure(IllegalArgumentException("කරුණාකර පණිවිඩයක් ඇතුළත් කරන්න."))
         }
         return try {
+            val nowMs = System.currentTimeMillis()
             val payload = mapOf(
                 "oicStationCode" to cleanStation,
                 "senderUid" to uid,
@@ -891,7 +934,14 @@ class PoliceRepository(
                 "senderRank" to chatMessage.senderRank.trim().take(80),
                 "senderBadge" to chatMessage.senderBadge.trim().take(40),
                 "message" to cleanText,
-                "createdAtMs" to System.currentTimeMillis(),
+                "messageType" to "TEXT",
+                "attachmentName" to "",
+                "attachmentMimeType" to "",
+                "attachmentSizeBytes" to 0L,
+                "attachmentDurationMs" to 0L,
+                "attachmentChunkCount" to 0,
+                "expiresAtMs" to ChatAttachmentUtils.computeExpiresAtMs(nowMs),
+                "createdAtMs" to nowMs,
                 "createdAt" to FieldValue.serverTimestamp()
             )
             withTimeout(12_000L) {
@@ -906,6 +956,234 @@ class PoliceRepository(
         } catch (e: Exception) {
             Log.w("PoliceRepository", "Failed to send station chat message", e)
             Result.failure(e)
+        }
+    }
+
+    suspend fun sendStationChatWithAttachment(
+        chatMessage: StationChatMessage,
+        fileBytes: ByteArray,
+        onProgress: (Float) -> Unit = {}
+    ): Result<String> {
+        val uid = requireUserId()
+        if (uid.isBlank()) {
+            return Result.failure(IllegalStateException("පණිවිඩ යැවීමට පුරනය වී සිටිය යුතුය."))
+        }
+        val cleanStation = chatMessage.oicStationCode.trim().uppercase().take(64)
+        if (cleanStation.isBlank()) {
+            return Result.failure(IllegalArgumentException("ඔබගේ පොලිස් ස්ථාන කේතය හමු නොවීය."))
+        }
+        val sizeBytes = fileBytes.size.toLong()
+        if (!ChatAttachmentUtils.isWithinSizeLimit(sizeBytes)) {
+            return Result.failure(
+                IllegalArgumentException(
+                    "ගොනුව 10 MB ට වඩා අඩු විය යුතුය (${ChatAttachmentUtils.formatFileSize(sizeBytes)})."
+                )
+            )
+        }
+
+        val rawChunks = ChatAttachmentUtils.splitByteArray(fileBytes, ChatAttachmentUtils.CHUNK_RAW_BYTES)
+        if (rawChunks.isEmpty() || rawChunks.size > ChatAttachmentUtils.MAX_CHUNK_COUNT) {
+            return Result.failure(IllegalArgumentException("ගොනු ප්‍රමාණය අනුමත සීමාව ඉක්මවයි (Max 10 MB)."))
+        }
+
+        val msgRef = db.collection("station_chats").document()
+        val nowMs = System.currentTimeMillis()
+        val expiresAtMs = ChatAttachmentUtils.computeExpiresAtMs(nowMs)
+        val safeName = ChatAttachmentUtils.sanitizeFileName(chatMessage.attachmentName, "file_${nowMs}")
+        val msgType = chatMessage.messageType.takeIf {
+            it in listOf("AUDIO", "IMAGE", "PDF", "FILE")
+        } ?: ChatAttachmentUtils.inferMessageType(chatMessage.attachmentMimeType, safeName)
+
+        return try {
+            onProgress(0.05f)
+            // Upload chunks before publishing parent metadata so recipients never open incomplete attachments
+            rawChunks.forEachIndexed { idx, bytesSlice ->
+                val encoded = Base64.encodeToString(bytesSlice, Base64.NO_WRAP)
+                val chunkPayload = mapOf(
+                    "chunkIndex" to idx,
+                    "oicStationCode" to cleanStation,
+                    "senderUid" to uid,
+                    "expiresAtMs" to expiresAtMs,
+                    "data" to encoded
+                )
+                val chunkDocId = idx.toString().padStart(4, '0')
+                withTimeout(25_000L) {
+                    msgRef.collection("chunks").document(chunkDocId).set(chunkPayload).await()
+                }
+                onProgress(((idx + 1).toFloat() / rawChunks.size) * 0.9f)
+            }
+
+            val parentPayload = mapOf(
+                "oicStationCode" to cleanStation,
+                "senderUid" to uid,
+                "senderName" to chatMessage.senderName.trim().take(120).ifBlank { "නිලධාරී" },
+                "senderRole" to if (chatMessage.senderRole in listOf("OIC", "ADMIN_BRANCH", "OFFICER")) chatMessage.senderRole else "OFFICER",
+                "senderRank" to chatMessage.senderRank.trim().take(80),
+                "senderBadge" to chatMessage.senderBadge.trim().take(40),
+                "message" to chatMessage.message.trim().take(1000),
+                "messageType" to msgType,
+                "attachmentName" to safeName.take(200),
+                "attachmentMimeType" to chatMessage.attachmentMimeType.trim().take(120),
+                "attachmentSizeBytes" to sizeBytes,
+                "attachmentDurationMs" to chatMessage.attachmentDurationMs.coerceAtLeast(0L),
+                "attachmentChunkCount" to rawChunks.size,
+                "expiresAtMs" to expiresAtMs,
+                "createdAtMs" to nowMs,
+                "createdAt" to FieldValue.serverTimestamp()
+            )
+            withTimeout(15_000L) {
+                msgRef.set(parentPayload).await()
+            }
+            onProgress(1f)
+            Result.success(msgRef.id)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w("PoliceRepository", "Failed uploading chat attachment", e)
+            // Best-effort cleanup of orphaned chunks on upload error
+            try {
+                for (idx in rawChunks.indices) {
+                    msgRef.collection("chunks").document(idx.toString().padStart(4, '0')).delete()
+                }
+            } catch (_: Exception) {
+            }
+            Result.failure(e)
+        }
+    }
+
+    fun getCachedChatAttachmentFile(context: Context, message: StationChatMessage): File? {
+        if (message.id.isBlank() || !message.hasAttachment()) return null
+        if (ChatAttachmentUtils.isExpired(message.effectiveTimestampMs(), message.expiresAtMs)) return null
+        val dir = File(context.cacheDir, "station_chat_media")
+        val safeName = ChatAttachmentUtils.sanitizeFileName(message.attachmentName, "${message.id}.bin")
+        val target = File(dir, "${message.id}_$safeName")
+        return if (target.exists() && target.length() > 0L &&
+            (message.attachmentSizeBytes <= 0L || target.length() == message.attachmentSizeBytes)
+        ) {
+            target
+        } else {
+            null
+        }
+    }
+
+    suspend fun downloadChatAttachmentToCache(
+        context: Context,
+        message: StationChatMessage
+    ): Result<File> = withContext(Dispatchers.IO) {
+        if (message.id.isBlank() || !message.hasAttachment()) {
+            return@withContext Result.failure(IllegalArgumentException("ඇමුණුමක් නොමැත."))
+        }
+        val nowMs = System.currentTimeMillis()
+        if (ChatAttachmentUtils.isExpired(message.effectiveTimestampMs(), message.expiresAtMs, nowMs)) {
+            return@withContext Result.failure(IllegalStateException("මෙම ගොනුව දින 2 කට පසු ස්වයංක්‍රීයව ඉවත් වී ඇත."))
+        }
+
+        getCachedChatAttachmentFile(context, message)?.let { cached ->
+            return@withContext Result.success(cached)
+        }
+
+        try {
+            val mediaDir = File(context.cacheDir, "station_chat_media").apply { mkdirs() }
+            val safeName = ChatAttachmentUtils.sanitizeFileName(message.attachmentName, "${message.id}.bin")
+            val target = File(mediaDir, "${message.id}_$safeName")
+            val temp = File(mediaDir, "${message.id}_$safeName.tmp")
+
+            val chunksSnap = withTimeout(35_000L) {
+                db.collection("station_chats")
+                    .document(message.id)
+                    .collection("chunks")
+                    .orderBy("chunkIndex")
+                    .get()
+                    .await()
+            }
+            if (chunksSnap.isEmpty) {
+                return@withContext Result.failure(IllegalStateException("ගොනුව Cloud වෙතින් හමු නොවීය (මැකී තිබිය හැක)."))
+            }
+
+            FileOutputStream(temp).use { fos ->
+                for (doc in chunksSnap.documents) {
+                    val b64 = doc.getString("data") ?: continue
+                    val decoded = Base64.decode(b64, Base64.DEFAULT)
+                    fos.write(decoded)
+                }
+                fos.flush()
+            }
+
+            if (target.exists()) target.delete()
+            if (!temp.renameTo(target)) {
+                temp.copyTo(target, overwrite = true)
+                temp.delete()
+            }
+            target.setLastModified(message.effectiveTimestampMs().takeIf { it > 0L } ?: nowMs)
+            Result.success(target)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w("PoliceRepository", "Failed downloading chat attachment", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Automatically deletes Station Chat messages & cloud chunks older than 2 days (48 hours)
+     * from both Firestore Cloud Storage and local app cache directories.
+     */
+    suspend fun pruneExpiredStationChatData(
+        context: Context,
+        oicStationCode: String
+    ) = withContext(Dispatchers.IO) {
+        val nowMs = System.currentTimeMillis()
+        // 1. Clean local cached chat media & voice temp files > 48 hours old
+        listOf(
+            File(context.cacheDir, "station_chat_media"),
+            File(context.cacheDir, "station_chat_voice")
+        ).forEach { dir ->
+            if (dir.exists() && dir.isDirectory) {
+                dir.listFiles()?.forEach { file ->
+                    if (nowMs - file.lastModified() >= ChatAttachmentUtils.RETENTION_MS) {
+                        file.delete()
+                    }
+                }
+            }
+        }
+
+        // 2. Clean expired station_chats documents + subcollection chunks in Firestore
+        val cleanStation = oicStationCode.trim().uppercase().take(64)
+        if (cleanStation.isBlank() || requireUserId().isBlank()) return@withContext
+        try {
+            val snap = db.collection("station_chats")
+                .whereEqualTo("oicStationCode", cleanStation)
+                .get()
+                .await()
+            val mediaDir = File(context.cacheDir, "station_chat_media")
+            for (doc in snap.documents) {
+                val createdAtTs = doc.getTimestamp("createdAt")?.toDate()?.time
+                val createdAtMs = createdAtTs ?: (doc.getLong("createdAtMs") ?: 0L)
+                val expiresAtMs = doc.getLong("expiresAtMs") ?: 0L
+                val isExpiredDoc = ChatAttachmentUtils.isExpired(createdAtMs, expiresAtMs, nowMs)
+                if (isExpiredDoc) {
+                    try {
+                        val chunks = doc.reference.collection("chunks").get().await()
+                        if (!chunks.isEmpty) {
+                            chunks.documents.chunked(350).forEach { group ->
+                                val batch = db.batch()
+                                group.forEach { batch.delete(it.reference) }
+                                batch.commit().await()
+                            }
+                        }
+                        doc.reference.delete().await()
+                        if (mediaDir.exists()) {
+                            mediaDir.listFiles { f -> f.name.startsWith("${doc.id}_") }?.forEach { it.delete() }
+                        }
+                    } catch (e: Exception) {
+                        Log.w("PoliceRepository", "Skipping cloud prune for chat ${doc.id}: ${e.message}")
+                    }
+                }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w("PoliceRepository", "Error pruning expired station chats", e)
         }
     }
 
@@ -1455,5 +1733,207 @@ class PoliceRepository(
             e.printStackTrace()
             null
         }
+    }
+
+    // --- Live OIC Camera & Audio Monitoring ---
+
+    suspend fun startLiveMonitorSession(
+        oicUser: AppUser,
+        officerUser: AppUser,
+        requestedCamera: Boolean,
+        requestedAudio: Boolean
+    ): Result<LiveMonitorSession> {
+        val oicUid = requireUserId().ifBlank { oicUser.uid }
+        val stationCode = (oicUser.oicStationCode ?: officerUser.oicStationCode ?: "").trim().uppercase()
+        if (oicUid.isBlank() || officerUser.uid.isBlank() || stationCode.isBlank()) {
+            return Result.failure(IllegalArgumentException("වලංගු OIC හෝ නිලධාරී තොරතුරු නොමැත."))
+        }
+        return try {
+            // End any stale previous active sessions for this officer initiated by this OIC
+            try {
+                val existing = db.collection("live_monitors")
+                    .whereEqualTo("officerUid", officerUser.uid)
+                    .get()
+                    .await()
+                for (doc in existing.documents) {
+                    val status = doc.getString("status") ?: ""
+                    val docOic = doc.getString("oicUid") ?: ""
+                    if (docOic == oicUid && status != "ENDED") {
+                        doc.reference.update(
+                            mapOf(
+                                "status" to "ENDED",
+                                "updatedAtMs" to System.currentTimeMillis()
+                            )
+                        )
+                    }
+                }
+            } catch (_: Exception) {
+            }
+
+            val now = System.currentTimeMillis()
+            val expiresAtMs = now + 20 * 60_000L
+            val docRef = db.collection("live_monitors").document()
+            val session = LiveMonitorSession(
+                sessionId = docRef.id,
+                oicStationCode = stationCode,
+                oicUid = oicUid,
+                oicName = oicUser.displayName.ifBlank { oicUser.email },
+                officerUid = officerUser.uid,
+                officerName = officerUser.displayName.ifBlank { officerUser.badgeNumber },
+                status = "REQUESTED",
+                requestedCamera = requestedCamera,
+                requestedAudio = requestedAudio,
+                cameraActive = false,
+                micActive = false,
+                lensFacing = "BACK",
+                createdAtMs = now,
+                updatedAtMs = now,
+                expiresAtMs = expiresAtMs
+            )
+            val payload = mapOf(
+                "sessionId" to session.sessionId,
+                "oicStationCode" to session.oicStationCode,
+                "oicUid" to session.oicUid,
+                "oicName" to session.oicName,
+                "officerUid" to session.officerUid,
+                "officerName" to session.officerName,
+                "status" to session.status,
+                "requestedCamera" to session.requestedCamera,
+                "requestedAudio" to session.requestedAudio,
+                "cameraActive" to false,
+                "micActive" to false,
+                "lensFacing" to session.lensFacing,
+                "createdAtMs" to now,
+                "updatedAtMs" to now,
+                "expiresAtMs" to expiresAtMs,
+                "createdAt" to FieldValue.serverTimestamp()
+            )
+            docRef.set(payload).await()
+            Result.success(session)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w("PoliceRepository", "Failed creating live monitor session", e)
+            Result.failure(e)
+        }
+    }
+
+    fun observeLiveMonitorSession(sessionId: String): Flow<LiveMonitorSession?> {
+        if (sessionId.isBlank()) return flowOf(null)
+        return db.collection("live_monitors").document(sessionId)
+            .snapshots()
+            .map { snap ->
+                if (!snap.exists()) null else snap.toObject(LiveMonitorSession::class.java)?.copy(
+                    sessionId = snap.id
+                )
+            }
+            .catch { e ->
+                if (e is CancellationException && e.cause == null) throw e
+                Log.w("PoliceRepository", "Error observing live monitor session", e)
+                emit(null)
+            }
+    }
+
+    fun observeIncomingMonitorRequestForOfficer(officerUid: String): Flow<LiveMonitorSession?> {
+        if (officerUid.isBlank()) return flowOf(null)
+        return db.collection("live_monitors")
+            .whereEqualTo("officerUid", officerUid)
+            .snapshots()
+            .map { snap ->
+                val now = System.currentTimeMillis()
+                snap.documents.mapNotNull { doc ->
+                    doc.toObject(LiveMonitorSession::class.java)?.copy(sessionId = doc.id)
+                }
+                    .filter { it.status != "ENDED" && (it.expiresAtMs == 0L || it.expiresAtMs > now) }
+                    .maxByOrNull { it.createdAtMs }
+            }
+            .catch { e ->
+                if (e is CancellationException && e.cause == null) throw e
+                Log.w("PoliceRepository", "Error observing officer incoming live monitor request", e)
+                emit(null)
+            }
+    }
+
+    suspend fun updateLiveMonitorControl(
+        sessionId: String,
+        lensFacing: String? = null,
+        requestedAudio: Boolean? = null,
+        status: String? = null
+    ) {
+        if (sessionId.isBlank()) return
+        try {
+            val updates = mutableMapOf<String, Any>("updatedAtMs" to System.currentTimeMillis())
+            if (lensFacing != null) updates["lensFacing"] = lensFacing
+            if (requestedAudio != null) updates["requestedAudio"] = requestedAudio
+            if (status != null) updates["status"] = status
+            db.collection("live_monitors").document(sessionId).update(updates).await()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w("PoliceRepository", "Failed updating live monitor control", e)
+        }
+    }
+
+    suspend fun endAndCleanupLiveMonitorSession(sessionId: String) {
+        if (sessionId.isBlank()) return
+        try {
+            val docRef = db.collection("live_monitors").document(sessionId)
+            try {
+                docRef.update(
+                    mapOf(
+                        "status" to "ENDED",
+                        "updatedAtMs" to System.currentTimeMillis()
+                    )
+                ).await()
+            } catch (_: Exception) {
+            }
+            try {
+                val videoDocs = docRef.collection("video_slots").get().await()
+                for (d in videoDocs.documents) {
+                    d.reference.delete()
+                }
+                val audioDocs = docRef.collection("audio_chunks").get().await()
+                for (d in audioDocs.documents) {
+                    d.reference.delete()
+                }
+            } catch (_: Exception) {
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w("PoliceRepository", "Failed ending live monitor session", e)
+        }
+    }
+
+    fun observeLatestVideoFrame(sessionId: String): Flow<LiveVideoSlot?> {
+        if (sessionId.isBlank()) return flowOf(null)
+        return db.collection("live_monitors").document(sessionId)
+            .collection("video_slots")
+            .snapshots()
+            .map { snap ->
+                snap.documents.mapNotNull { it.toObject(LiveVideoSlot::class.java) }
+                    .maxByOrNull { it.seq }
+            }
+            .catch { e ->
+                if (e is CancellationException && e.cause == null) throw e
+                Log.w("PoliceRepository", "Error observing video slots", e)
+                emit(null)
+            }
+    }
+
+    fun observeAudioChunks(sessionId: String): Flow<List<LiveAudioChunk>> {
+        if (sessionId.isBlank()) return flowOf(emptyList())
+        return db.collection("live_monitors").document(sessionId)
+            .collection("audio_chunks")
+            .snapshots()
+            .map { snap ->
+                snap.documents.mapNotNull { it.toObject(LiveAudioChunk::class.java) }
+                    .sortedBy { it.seq }
+            }
+            .catch { e ->
+                if (e is CancellationException && e.cause == null) throw e
+                Log.w("PoliceRepository", "Error observing audio chunks", e)
+                emit(emptyList())
+            }
     }
 }

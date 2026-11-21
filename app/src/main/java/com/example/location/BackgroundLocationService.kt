@@ -27,6 +27,8 @@ import androidx.core.content.ContextCompat
 import com.example.MainActivity
 import com.example.R
 import com.example.data.AppUser
+import com.example.data.LiveMonitorSession
+import com.example.streaming.LiveMonitorService
 import com.example.util.DateTimeUtils
 import com.example.util.GeoRouteUtils
 import com.google.android.gms.location.FusedLocationProviderClient
@@ -51,6 +53,8 @@ class BackgroundLocationService : Service() {
     private var locationCallback: LocationCallback? = null
     private var gpsListener: LocationListener? = null
     private var userDocListener: ListenerRegistration? = null
+    private var liveMonitorListener: ListenerRegistration? = null
+    private val handledLiveMonitorRequests = mutableSetOf<String>()
     private var wakeLock: PowerManager.WakeLock? = null
     private val watchdogHandler = Handler(Looper.getMainLooper())
     private var isWatchdogScheduled = false
@@ -67,7 +71,11 @@ class BackgroundLocationService : Service() {
     private var lastSavedLat: Double = 0.0
     private var lastSavedLng: Double = 0.0
     private var lastSavedTimeMs: Long = 0L
+    private var lastHeartbeatTimeMs: Long = 0L
     private var lastReceivedFixMs: Long = 0L
+    private var pendingSpikeLat: Double = 0.0
+    private var pendingSpikeLng: Double = 0.0
+    private var pendingSpikeTimeMs: Long = 0L
 
     private val db: FirebaseFirestore by lazy {
         FirebaseFirestore.getInstance(getString(R.string.firestore_database_id))
@@ -339,6 +347,25 @@ class BackgroundLocationService : Service() {
                     stopTrackingAndSelf()
                 }
             }
+
+        if (liveMonitorListener == null) {
+            liveMonitorListener = db.collection("live_monitors")
+                .whereEqualTo("officerUid", uid)
+                .addSnapshotListener { snap, err ->
+                    if (err != null || snap == null) return@addSnapshotListener
+                    if (!cachedIsOnDuty || cachedStatus != "APPROVED") return@addSnapshotListener
+                    val now = System.currentTimeMillis()
+                    val req = snap.documents.mapNotNull { doc ->
+                        doc.toObject(LiveMonitorSession::class.java)?.copy(sessionId = doc.id)
+                    }
+                        .filter { it.status == "REQUESTED" && (it.expiresAtMs == 0L || it.expiresAtMs > now) }
+                        .maxByOrNull { it.createdAtMs }
+                        ?: return@addSnapshotListener
+                    if (handledLiveMonitorRequests.add(req.sessionId)) {
+                        LiveMonitorService.start(this, req)
+                    }
+                }
+        }
     }
 
     @SuppressLint("MissingPermission")
@@ -349,16 +376,16 @@ class BackgroundLocationService : Service() {
         }
 
         if (locationCallback == null) {
-            val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 3000L)
-                .setMinUpdateIntervalMillis(2000L)
-                .setMinUpdateDistanceMeters(2.0f)
-                .setWaitForAccurateLocation(false)
+            val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 4000L)
+                .setMinUpdateIntervalMillis(2500L)
+                .setMinUpdateDistanceMeters(5.0f)
+                .setWaitForAccurateLocation(true)
                 .build()
 
             val cb = object : LocationCallback() {
                 override fun onLocationResult(result: LocationResult) {
                     val best = result.locations
-                        .filter { it.latitude != 0.0 || it.longitude != 0.0 }
+                        .filter { (it.latitude != 0.0 || it.longitude != 0.0) && it.accuracy in 0.1f..40f }
                         .minByOrNull { it.accuracy }
                         ?: result.lastLocation
                         ?: return
@@ -382,8 +409,8 @@ class BackgroundLocationService : Service() {
                 try {
                     lm.requestLocationUpdates(
                         LocationManager.GPS_PROVIDER,
-                        3000L,
-                        2.0f,
+                        4000L,
+                        4.0f,
                         listener,
                         Looper.getMainLooper()
                     )
@@ -397,7 +424,16 @@ class BackgroundLocationService : Service() {
 
     private fun handleBackgroundLocation(location: Location) {
         if (location.latitude == 0.0 && location.longitude == 0.0) return
-        if (location.accuracy > 150f) return
+        if (!location.hasAccuracy() || location.accuracy <= 0f) return
+        val provider = location.provider?.lowercase(Locale.US).orEmpty()
+        if (provider == LocationManager.NETWORK_PROVIDER || provider == LocationManager.PASSIVE_PROVIDER) return
+
+        // Reject stale cached fixes (> 20s old)
+        val fixAgeMs = ((SystemClock.elapsedRealtimeNanos() - location.elapsedRealtimeNanos) / 1_000_000L)
+        if (fixAgeMs > 20_000L) return
+
+        // Only true high-accuracy GPS fixes allowed for patrol trail logging
+        if (location.accuracy > 32f) return
 
         lastReceivedFixMs = System.currentTimeMillis()
         acquireOrRenewWakeLock()
@@ -416,36 +452,92 @@ class BackgroundLocationService : Service() {
         val movedMeters = if (lastSavedTimeMs == 0L) Double.MAX_VALUE
         else GeoRouteUtils.distanceMeters(lastSavedLat, lastSavedLng, location.latitude, location.longitude)
 
-        if (movedMeters < 3.0 && (nowMs - lastSavedTimeMs) < 20_000L) return
+        // Two-fix confirmation against sudden GPS / cell teleport spikes (> 65m & > 36 m/s)
+        if (lastSavedTimeMs > 0L) {
+            val dtSec = ((nowMs - lastSavedTimeMs) / 1000.0).coerceAtLeast(1.0)
+            val speedMps = movedMeters / dtSec
+            if (movedMeters > 65.0 && speedMps > 36.0) {
+                val confirmedNearPending = pendingSpikeTimeMs > 0L &&
+                    (nowMs - pendingSpikeTimeMs) <= 20_000L &&
+                    GeoRouteUtils.distanceMeters(pendingSpikeLat, pendingSpikeLng, location.latitude, location.longitude) <= 35.0
+                if (!confirmedNearPending) {
+                    pendingSpikeLat = location.latitude
+                    pendingSpikeLng = location.longitude
+                    pendingSpikeTimeMs = nowMs
+                    return
+                }
+            }
+            pendingSpikeTimeMs = 0L
+        }
+
+        val requiredMoveMeters = maxOf(10.0, (location.accuracy * 1.4).coerceAtMost(28.0))
+        val isDopplerStationary = location.hasSpeed() && location.speed < 0.45f && movedMeters < maxOf(16.0, location.accuracy * 1.6)
+        val movedMeaningfully = lastSavedTimeMs == 0L || (movedMeters >= requiredMoveMeters && !isDopplerStationary)
+
+        if (!movedMeaningfully) {
+            // Stationary anchored heartbeat (keeps dwell time & on-duty alive WITHOUT coordinate drift)
+            val heartbeatDue = (nowMs - lastHeartbeatTimeMs) >= 90_000L
+            if (!heartbeatDue || lastSavedTimeMs == 0L) return
+            lastHeartbeatTimeMs = nowMs
+            writeBreadcrumbAndUserPin(
+                lat = lastSavedLat,
+                lng = lastSavedLng,
+                accuracy = location.accuracy,
+                nowMs = nowMs,
+                includeBreadcrumb = true
+            )
+            return
+        }
+
+        if (lastSavedTimeMs > 0L && (nowMs - lastSavedTimeMs) < 4_500L) return
 
         lastSavedLat = location.latitude
         lastSavedLng = location.longitude
         lastSavedTimeMs = nowMs
+        lastHeartbeatTimeMs = nowMs
 
+        writeBreadcrumbAndUserPin(
+            lat = location.latitude,
+            lng = location.longitude,
+            accuracy = location.accuracy,
+            nowMs = nowMs,
+            includeBreadcrumb = true
+        )
+    }
+
+    private fun writeBreadcrumbAndUserPin(
+        lat: Double,
+        lng: Double,
+        accuracy: Float,
+        nowMs: Long,
+        includeBreadcrumb: Boolean
+    ) {
         val today = DateTimeUtils.getTodayKey()
         val cleanStation = cachedStation.trim().uppercase()
-        val locPayload = mapOf(
-            "officerId" to cachedUid,
-            "officerName" to cachedName.ifBlank { "Officer" },
-            "oicStationCode" to cleanStation,
-            "dateKey" to today,
-            "dayStationKey" to "${cleanStation}_$today",
-            "officerDayKey" to "${cachedUid}_$today",
-            "lat" to location.latitude,
-            "lng" to location.longitude,
-            "accuracy" to location.accuracy,
-            "dutyType" to "ON_DUTY",
-            "timestamp" to nowMs,
-            "createdAt" to FieldValue.serverTimestamp()
-        )
-        db.collection("location_history").document().set(locPayload)
-            .addOnFailureListener { e -> Log.w(TAG, "Failed saving bg breadcrumb", e) }
+        if (includeBreadcrumb) {
+            val locPayload = mapOf(
+                "officerId" to cachedUid,
+                "officerName" to cachedName.ifBlank { "Officer" },
+                "oicStationCode" to cleanStation,
+                "dateKey" to today,
+                "dayStationKey" to "${cleanStation}_$today",
+                "officerDayKey" to "${cachedUid}_$today",
+                "lat" to lat,
+                "lng" to lng,
+                "accuracy" to accuracy,
+                "dutyType" to "ON_DUTY",
+                "timestamp" to nowMs,
+                "createdAt" to FieldValue.serverTimestamp()
+            )
+            db.collection("location_history").document().set(locPayload)
+                .addOnFailureListener { e -> Log.w(TAG, "Failed saving bg breadcrumb", e) }
+        }
 
         val userUpdates = mapOf(
             "isOnDuty" to true,
             "lastLocation" to mapOf(
-                "lat" to location.latitude,
-                "lng" to location.longitude,
+                "lat" to lat,
+                "lng" to lng,
                 "timestamp" to nowMs
             ),
             "updatedAt" to FieldValue.serverTimestamp()
@@ -454,7 +546,7 @@ class BackgroundLocationService : Service() {
             .addOnFailureListener { e -> Log.w(TAG, "Failed updating lastLocation in bg", e) }
 
         val timeText = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(nowMs))
-        updateOngoingNotification("සජීවී පසුබිම් GPS සක්‍රීයයි • අවසන් සටහන: $timeText")
+        updateOngoingNotification("සජීවී නිවැරදි GPS සක්‍රීයයි (±${accuracy.toInt()}m) • $timeText")
     }
 
     private fun stopTrackingAndSelf() {
@@ -492,6 +584,9 @@ class BackgroundLocationService : Service() {
 
         userDocListener?.remove()
         userDocListener = null
+
+        liveMonitorListener?.remove()
+        liveMonitorListener = null
     }
 
     override fun onDestroy() {

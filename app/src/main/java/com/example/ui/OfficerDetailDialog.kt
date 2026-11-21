@@ -272,6 +272,94 @@ fun OfficerDetailDialog(
                     }
                 }
 
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Live Camera & Audio Supervision Card
+                val canMonitorByDuty = currentOfficer.isOnDuty && !currentOfficer.hideDutyStatus
+                val hasCamPerm = currentOfficer.hasCameraPermission
+                val hasMicPerm = currentOfficer.hasMicPermission
+                val hasAnyMediaPerm = hasCamPerm || hasMicPerm
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp),
+                    color = if (canMonitorByDuty && hasAnyMediaPerm) Color(0xFFDC2626).copy(alpha = 0.08f)
+                    else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                    border = androidx.compose.foundation.BorderStroke(
+                        1.dp,
+                        if (canMonitorByDuty && hasAnyMediaPerm) Color(0xFFDC2626).copy(alpha = 0.35f)
+                        else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier.padding(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = if (hasCamPerm) Icons.Default.Videocam else Icons.Default.VideocamOff,
+                                    contentDescription = null,
+                                    tint = if (hasCamPerm) PoliceThemeColors.greenText else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = if (hasCamPerm) "කැමරා ✓" else "කැමරා ✗",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = if (hasCamPerm) PoliceThemeColors.greenText else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = if (hasMicPerm) Icons.Default.Mic else Icons.Default.MicOff,
+                                    contentDescription = null,
+                                    tint = if (hasMicPerm) PoliceThemeColors.greenText else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = if (hasMicPerm) "ශ්‍රව්‍ය ✓" else "ශ්‍රව්‍ය ✗",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = if (hasMicPerm) PoliceThemeColors.greenText else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Spacer(modifier = Modifier.weight(1f))
+                            Button(
+                                onClick = {
+                                    viewModel.startOicLiveMonitor(currentOfficer)
+                                    onDismiss()
+                                },
+                                enabled = canMonitorByDuty && hasAnyMediaPerm,
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color(0xFFDC2626),
+                                    contentColor = Color.White
+                                ),
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                modifier = Modifier.testTag("detail_live_monitor_btn")
+                            ) {
+                                Icon(Icons.Default.Videocam, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(5.dp))
+                                Text(
+                                    text = when {
+                                        !canMonitorByDuty -> "OFF DUTY"
+                                        !hasAnyMediaPerm -> "අවසර නැත"
+                                        else -> "සජීවී Cam / Audio"
+                                    },
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                }
+
                 Spacer(modifier = Modifier.height(10.dp))
 
                 // Data Section Selector Tabs (Duty / Mess / Running Chart)

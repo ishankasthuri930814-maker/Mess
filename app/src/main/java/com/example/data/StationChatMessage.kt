@@ -17,9 +17,22 @@ data class StationChatMessage(
     val senderRank: String = "",
     val senderBadge: String = "",
     val message: String = "",
+    val messageType: String = "TEXT", // "TEXT", "AUDIO", "IMAGE", "PDF", "FILE"
+    val attachmentName: String = "",
+    val attachmentMimeType: String = "",
+    val attachmentSizeBytes: Long = 0L,
+    val attachmentDurationMs: Long = 0L,
+    val attachmentChunkCount: Int = 0,
+    val expiresAtMs: Long = 0L,
     val createdAtMs: Long = 0L,
     @ServerTimestamp val createdAt: Timestamp? = null
 ) {
+    fun effectiveTimestampMs(): Long = createdAt?.toDate()?.time ?: createdAtMs
+
+    fun hasAttachment(): Boolean = messageType != "TEXT" && attachmentChunkCount > 0
+
+    fun uniqueKey(): String = id.ifBlank { "${senderUid}_${createdAtMs}_${attachmentName}" }
+
     fun formatSenderHeader(): String {
         val cleanName = senderName.ifBlank { "නිලධාරී" }
         return when (senderRole.uppercase()) {

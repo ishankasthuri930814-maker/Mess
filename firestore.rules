@@ -50,6 +50,8 @@ service cloud.firestore {
              (!('hiddenOnMap' in data) || data.hiddenOnMap is bool) &&
              (!('pauseLocationLogging' in data) || data.pauseLocationLogging is bool) &&
              (!('hideDutyStatus' in data) || data.hideDutyStatus is bool) &&
+             (!('hasCameraPermission' in data) || data.hasCameraPermission is bool) &&
+             (!('hasMicPermission' in data) || data.hasMicPermission is bool) &&
              (!('lastLocation' in data) || data.lastLocation is map) &&
              (!('lastOffDutyLocation' in data) || data.lastOffDutyLocation is map) &&
              (!('adminSecretSeed' in data) || data.adminSecretSeed is string) &&
@@ -336,18 +338,158 @@ service cloud.firestore {
              data.senderRole in ['OIC', 'ADMIN_BRANCH', 'OFFICER'] &&
              (!('senderRank' in data) || data.senderRank is string) &&
              (!('senderBadge' in data) || data.senderBadge is string) &&
-             data.message is string && data.message.size() >= 1 && data.message.size() <= 1000 &&
+             data.message is string && data.message.size() <= 1000 &&
+             (data.message.size() >= 1 || (('messageType' in data) && data.messageType in ['AUDIO', 'IMAGE', 'PDF', 'FILE'])) &&
+             (!('messageType' in data) || data.messageType in ['TEXT', 'AUDIO', 'IMAGE', 'PDF', 'FILE']) &&
+             (!('attachmentName' in data) || (data.attachmentName is string && data.attachmentName.size() <= 200)) &&
+             (!('attachmentMimeType' in data) || (data.attachmentMimeType is string && data.attachmentMimeType.size() <= 120)) &&
+             (!('attachmentSizeBytes' in data) || (data.attachmentSizeBytes is number && data.attachmentSizeBytes >= 0 && data.attachmentSizeBytes <= 10485760)) &&
+             (!('attachmentDurationMs' in data) || (data.attachmentDurationMs is number && data.attachmentDurationMs >= 0)) &&
+             (!('attachmentChunkCount' in data) || (data.attachmentChunkCount is number && data.attachmentChunkCount >= 0 && data.attachmentChunkCount <= 40)) &&
+             (!('expiresAtMs' in data) || data.expiresAtMs is number) &&
              data.createdAtMs is number &&
              data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    function isSameStationAsUser(stationCode) {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.oicStationCode == stationCode;
     }
 
     match /station_chats/{messageId} {
       allow read: if isSignedIn() && (
                      resource.data.senderUid == request.auth.uid ||
-                     get(/databases/$(database)/documents/users/$(request.auth.uid)).data.oicStationCode == resource.data.oicStationCode
+                     isSameStationAsUser(resource.data.oicStationCode)
                   );
       allow create: if isSignedIn() && isValidStationChatMessage(incoming());
-      allow delete: if isSignedIn() && (resource.data.senderUid == request.auth.uid || isOIC());
+      allow delete: if isSignedIn() && (
+                       resource.data.senderUid == request.auth.uid ||
+                       isOIC() ||
+                       (isSameStationAsUser(resource.data.oicStationCode) &&
+                        ('expiresAtMs' in resource.data) &&
+                        resource.data.expiresAtMs > 0 &&
+                        resource.data.expiresAtMs <= request.time.toMillis())
+                    );
+
+      match /chunks/{chunkIndex} {
+        allow read: if isSignedIn() && (
+                       resource.data.senderUid == request.auth.uid ||
+                       isSameStationAsUser(resource.data.oicStationCode)
+                    );
+        allow create: if isSignedIn() &&
+                         incoming().senderUid == request.auth.uid &&
+                         incoming().oicStationCode is string &&
+                         incoming().oicStationCode.size() >= 1 &&
+                         incoming().oicStationCode.size() <= 64 &&
+                         incoming().chunkIndex is number &&
+                         incoming().chunkIndex >= 0 &&
+                         incoming().chunkIndex < 40 &&
+                         incoming().data is string &&
+                         incoming().data.size() >= 1 &&
+                         incoming().data.size() <= 750000 &&
+                         (!('expiresAtMs' in incoming()) || incoming().expiresAtMs is number);
+        allow delete: if isSignedIn() && (
+                         resource.data.senderUid == request.auth.uid ||
+                         isOIC() ||
+                         (isSameStationAsUser(resource.data.oicStationCode) &&
+                          ('expiresAtMs' in resource.data) &&
+                          resource.data.expiresAtMs > 0 &&
+                          resource.data.expiresAtMs <= request.time.toMillis())
+                      );
+      }
+    }
+
+    function isValidLiveMonitorSession(data) {
+      return data.sessionId is string && data.sessionId.size() >= 1 && data.sessionId.size() <= 128 &&
+             data.oicStationCode is string && data.oicStationCode.size() >= 1 && data.oicStationCode.size() <= 64 &&
+             data.oicUid is string &&
+             data.oicName is string && data.oicName.size() <= 120 &&
+             data.officerUid is string &&
+             data.officerName is string && data.officerName.size() <= 120 &&
+             data.status in ['REQUESTED', 'ACTIVE', 'NEEDS_FOREGROUND', 'ENDED'] &&
+             data.requestedCamera is bool &&
+             data.requestedAudio is bool &&
+             data.cameraActive is bool &&
+             data.micActive is bool &&
+             data.lensFacing in ['BACK', 'FRONT'] &&
+             data.createdAtMs is number &&
+             data.updatedAtMs is number &&
+             data.expiresAtMs is number &&
+             (!('createdAt' in data) || (data.createdAt is timestamp && data.createdAt <= request.time));
+    }
+
+    match /live_monitors/{sessionId} {
+      allow read: if isSignedIn() && (
+                     resource.data.oicUid == request.auth.uid ||
+                     resource.data.officerUid == request.auth.uid
+                  );
+      allow create: if isSignedIn() &&
+                       isOIC() &&
+                       incoming().oicUid == request.auth.uid &&
+                       incoming().status == 'REQUESTED' &&
+                       isSameStationAsUser(incoming().oicStationCode) &&
+                       get(/databases/$(database)/documents/users/$(incoming().officerUid)).data.oicStationCode == incoming().oicStationCode &&
+                       isValidLiveMonitorSession(incoming());
+      allow update: if isSignedIn() && (
+                       (existing().oicUid == request.auth.uid &&
+                        incoming().oicUid == existing().oicUid &&
+                        incoming().officerUid == existing().officerUid &&
+                        incoming().oicStationCode == existing().oicStationCode &&
+                        incoming().diff(existing()).affectedKeys().hasOnly(['status', 'lensFacing', 'requestedCamera', 'requestedAudio', 'updatedAtMs', 'expiresAtMs'])) ||
+                       (existing().officerUid == request.auth.uid &&
+                        incoming().oicUid == existing().oicUid &&
+                        incoming().officerUid == existing().officerUid &&
+                        incoming().oicStationCode == existing().oicStationCode &&
+                        incoming().diff(existing()).affectedKeys().hasOnly(['status', 'cameraActive', 'micActive', 'updatedAtMs', 'expiresAtMs']))
+                    ) && isValidLiveMonitorSession(incoming());
+      allow delete: if isSignedIn() && (
+                       resource.data.oicUid == request.auth.uid ||
+                       resource.data.officerUid == request.auth.uid
+                    );
+
+      match /video_slots/{slotId} {
+        allow read: if isSignedIn() && (
+                       resource.data.oicUid == request.auth.uid ||
+                       resource.data.officerUid == request.auth.uid
+                    );
+        allow create, update: if isSignedIn() &&
+                                 incoming().officerUid == request.auth.uid &&
+                                 get(/databases/$(database)/documents/live_monitors/$(sessionId)).data.officerUid == request.auth.uid &&
+                                 get(/databases/$(database)/documents/live_monitors/$(sessionId)).data.oicUid == incoming().oicUid &&
+                                 incoming().slotIndex is number && incoming().slotIndex >= 0 && incoming().slotIndex < 8 &&
+                                 incoming().seq is number && incoming().seq >= 0 &&
+                                 incoming().jpegBase64 is string && incoming().jpegBase64.size() <= 450000 &&
+                                 incoming().width is number && incoming().height is number &&
+                                 incoming().timestampMs is number &&
+                                 incoming().oicUid is string &&
+                                 incoming().oicStationCode is string;
+        allow delete: if isSignedIn() && (
+                         resource.data.officerUid == request.auth.uid ||
+                         resource.data.oicUid == request.auth.uid
+                      );
+      }
+
+      match /audio_chunks/{slotId} {
+        allow read: if isSignedIn() && (
+                       resource.data.oicUid == request.auth.uid ||
+                       resource.data.officerUid == request.auth.uid
+                    );
+        allow create, update: if isSignedIn() &&
+                                 incoming().officerUid == request.auth.uid &&
+                                 get(/databases/$(database)/documents/live_monitors/$(sessionId)).data.officerUid == request.auth.uid &&
+                                 get(/databases/$(database)/documents/live_monitors/$(sessionId)).data.oicUid == incoming().oicUid &&
+                                 incoming().slotIndex is number && incoming().slotIndex >= 0 && incoming().slotIndex < 16 &&
+                                 incoming().seq is number && incoming().seq >= 0 &&
+                                 incoming().adpcmBase64 is string && incoming().adpcmBase64.size() <= 150000 &&
+                                 incoming().sampleRate is number && incoming().sampleRate >= 8000 && incoming().sampleRate <= 48000 &&
+                                 incoming().sampleCount is number && incoming().sampleCount >= 0 &&
+                                 incoming().timestampMs is number &&
+                                 incoming().oicUid is string &&
+                                 incoming().oicStationCode is string;
+        allow delete: if isSignedIn() && (
+                         resource.data.officerUid == request.auth.uid ||
+                         resource.data.oicUid == request.auth.uid
+                      );
+      }
     }
   }
 }

@@ -583,6 +583,97 @@ test("OIC can remove station member, Admin Branch can send ALL notification, and
     kandyDb.collection("station_chats").where("oicStationCode", "==", "OIC-COL-1001").get()
   );
 
+  // Alice can send a <10MB PDF attachment message + chunk, and same-station Admin/OIC can read it
+  const expiresFuture = Date.now() + 2 * 24 * 60 * 60 * 1000;
+  await assertSucceeds(
+    aliceDb.collection("station_chats").doc("msg_pdf").collection("chunks").doc("0000").set({
+      chunkIndex: 0,
+      oicStationCode: "OIC-COL-1001",
+      senderUid: "alice",
+      expiresAtMs: expiresFuture,
+      data: "JVBERi0xLjQK"
+    })
+  );
+  await assertSucceeds(
+    aliceDb.collection("station_chats").doc("msg_pdf").set({
+      oicStationCode: "OIC-COL-1001",
+      senderUid: "alice",
+      senderName: "PC Alice",
+      senderRole: "OFFICER",
+      senderRank: "Police Constable (PC)",
+      senderBadge: "81234",
+      message: "",
+      messageType: "PDF",
+      attachmentName: "duty_order.pdf",
+      attachmentMimeType: "application/pdf",
+      attachmentSizeBytes: 204800,
+      attachmentDurationMs: 0,
+      attachmentChunkCount: 1,
+      expiresAtMs: expiresFuture,
+      createdAtMs: Date.now() - 1000,
+      createdAt: validTime
+    })
+  );
+
+  await assertSucceeds(
+    adminDb.collection("station_chats").doc("msg_pdf").collection("chunks").doc("0000").get()
+  );
+  await assertFails(
+    kandyDb.collection("station_chats").doc("msg_pdf").collection("chunks").doc("0000").get()
+  );
+
+  // Attachment > 10MB (10,485,760 bytes) is rejected
+  await assertFails(
+    aliceDb.collection("station_chats").doc("msg_too_big").set({
+      oicStationCode: "OIC-COL-1001",
+      senderUid: "alice",
+      senderName: "PC Alice",
+      senderRole: "OFFICER",
+      message: "",
+      messageType: "FILE",
+      attachmentName: "huge.bin",
+      attachmentMimeType: "application/octet-stream",
+      attachmentSizeBytes: 10485761,
+      attachmentChunkCount: 30,
+      expiresAtMs: expiresFuture,
+      createdAtMs: Date.now() - 1000,
+      createdAt: validTime
+    })
+  );
+
+  // Station member (Admin) can auto-delete expired (>48h old) message & its chunks, but NOT unexpired messages from Alice
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    const db = context.firestore();
+    const expiredAt = Date.now() - 60000;
+    await db.collection("station_chats").doc("msg_expired").set({
+      oicStationCode: "OIC-COL-1001",
+      senderUid: "alice",
+      senderName: "PC Alice",
+      senderRole: "OFFICER",
+      message: "Old chat",
+      messageType: "TEXT",
+      expiresAtMs: expiredAt,
+      createdAtMs: expiredAt - 172800000
+    });
+    await db.collection("station_chats").doc("msg_expired").collection("chunks").doc("0000").set({
+      chunkIndex: 0,
+      oicStationCode: "OIC-COL-1001",
+      senderUid: "alice",
+      expiresAtMs: expiredAt,
+      data: "AAAA"
+    });
+  });
+
+  await assertFails(
+    adminDb.collection("station_chats").doc("msg_pdf").delete()
+  );
+  await assertSucceeds(
+    adminDb.collection("station_chats").doc("msg_expired").collection("chunks").doc("0000").delete()
+  );
+  await assertSucceeds(
+    adminDb.collection("station_chats").doc("msg_expired").delete()
+  );
+
   // OIC can remove Alice from station
   await assertSucceeds(
     oicDb.collection("users").doc("alice").update({
@@ -593,6 +684,193 @@ test("OIC can remove station member, Admin Branch can send ALL notification, and
     })
   );
 });
+
+test("OIC and on-duty subordinate enforce strict privacy and permission-scoped rules on live_monitors", async () => {
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    const db = context.firestore();
+    await db.collection("users").doc("oic_col").set({
+      uid: "oic_col",
+      displayName: "OIC Colombo",
+      email: "oic@police.lk",
+      role: "OIC",
+      status: "APPROVED",
+      oicStationCode: "OIC-COL-1001"
+    });
+    await db.collection("users").doc("alice").set({
+      uid: "alice",
+      displayName: "PC Alice",
+      email: "alice@police.lk",
+      role: "OFFICER",
+      status: "APPROVED",
+      oicStationCode: "OIC-COL-1001",
+      isOnDuty: true,
+      hasCameraPermission: true,
+      hasMicPermission: true
+    });
+    await db.collection("users").doc("bob").set({
+      uid: "bob",
+      displayName: "PC Bob",
+      email: "bob@police.lk",
+      role: "OFFICER",
+      status: "APPROVED",
+      oicStationCode: "OIC-COL-1001",
+      isOnDuty: true
+    });
+    await db.collection("users").doc("oic_knd").set({
+      uid: "oic_knd",
+      displayName: "OIC Kandy",
+      email: "oicknd@police.lk",
+      role: "OIC",
+      status: "APPROVED",
+      oicStationCode: "OIC-KND-9999"
+    });
+  });
+
+  const oicDb = testEnv.authenticatedContext("oic_col").firestore();
+  const aliceDb = testEnv.authenticatedContext("alice").firestore();
+  const bobDb = testEnv.authenticatedContext("bob").firestore();
+  const kandyOicDb = testEnv.authenticatedContext("oic_knd").firestore();
+  const now = Date.now() - 1000;
+  const validTime = new Date(now);
+
+  // Alice can sync her runtime permission flags
+  await assertSucceeds(
+    aliceDb.collection("users").doc("alice").update({
+      hasCameraPermission: true,
+      hasMicPermission: false
+    })
+  );
+
+  // Kandy OIC cannot create a live monitor session for Colombo officer Alice
+  await assertFails(
+    kandyOicDb.collection("live_monitors").doc("lm_cross").set({
+      sessionId: "lm_cross",
+      oicStationCode: "OIC-COL-1001",
+      oicUid: "oic_knd",
+      oicName: "OIC Kandy",
+      officerUid: "alice",
+      officerName: "PC Alice",
+      status: "REQUESTED",
+      requestedCamera: true,
+      requestedAudio: true,
+      cameraActive: false,
+      micActive: false,
+      lensFacing: "BACK",
+      createdAtMs: now,
+      updatedAtMs: now,
+      expiresAtMs: now + 600000,
+      createdAt: validTime
+    })
+  );
+
+  // Non-OIC Bob cannot initiate a live monitor session
+  await assertFails(
+    bobDb.collection("live_monitors").doc("lm_bob").set({
+      sessionId: "lm_bob",
+      oicStationCode: "OIC-COL-1001",
+      oicUid: "bob",
+      oicName: "PC Bob",
+      officerUid: "alice",
+      officerName: "PC Alice",
+      status: "REQUESTED",
+      requestedCamera: true,
+      requestedAudio: false,
+      cameraActive: false,
+      micActive: false,
+      lensFacing: "BACK",
+      createdAtMs: now,
+      updatedAtMs: now,
+      expiresAtMs: now + 600000,
+      createdAt: validTime
+    })
+  );
+
+  // Colombo OIC creates valid live monitor session for Alice
+  await assertSucceeds(
+    oicDb.collection("live_monitors").doc("lm_1").set({
+      sessionId: "lm_1",
+      oicStationCode: "OIC-COL-1001",
+      oicUid: "oic_col",
+      oicName: "OIC Colombo",
+      officerUid: "alice",
+      officerName: "PC Alice",
+      status: "REQUESTED",
+      requestedCamera: true,
+      requestedAudio: true,
+      cameraActive: false,
+      micActive: false,
+      lensFacing: "BACK",
+      createdAtMs: now,
+      updatedAtMs: now,
+      expiresAtMs: now + 600000,
+      createdAt: validTime
+    })
+  );
+
+  // Alice accepts and marks stream ACTIVE, then publishes a video slot and audio chunk
+  await assertSucceeds(
+    aliceDb.collection("live_monitors").doc("lm_1").update({
+      status: "ACTIVE",
+      cameraActive: true,
+      micActive: true,
+      updatedAtMs: Date.now()
+    })
+  );
+  await assertSucceeds(
+    aliceDb.collection("live_monitors").doc("lm_1").collection("video_slots").doc("slot_0").set({
+      slotIndex: 0,
+      seq: 1,
+      jpegBase64: "/9j/4AAQSkZJRg==",
+      width: 480,
+      height: 360,
+      timestampMs: Date.now(),
+      officerUid: "alice",
+      oicUid: "oic_col",
+      oicStationCode: "OIC-COL-1001"
+    })
+  );
+  await assertSucceeds(
+    aliceDb.collection("live_monitors").doc("lm_1").collection("audio_chunks").doc("slot_0").set({
+      slotIndex: 0,
+      seq: 1,
+      adpcmBase64: "AAAA",
+      sampleRate: 16000,
+      sampleCount: 4000,
+      timestampMs: Date.now(),
+      officerUid: "alice",
+      oicUid: "oic_col",
+      oicStationCode: "OIC-COL-1001"
+    })
+  );
+
+  // OIC can read video slot, audio chunk, switch lensFacing, and end session
+  await assertSucceeds(
+    oicDb.collection("live_monitors").doc("lm_1").collection("video_slots").doc("slot_0").get()
+  );
+  await assertSucceeds(
+    oicDb.collection("live_monitors").doc("lm_1").collection("audio_chunks").doc("slot_0").get()
+  );
+  await assertSucceeds(
+    oicDb.collection("live_monitors").doc("lm_1").update({
+      lensFacing: "FRONT",
+      updatedAtMs: Date.now()
+    })
+  );
+
+  // Another officer (Bob) CANNOT read Alice's live session, video frame, or audio chunk
+  await assertFails(bobDb.collection("live_monitors").doc("lm_1").get());
+  await assertFails(bobDb.collection("live_monitors").doc("lm_1").collection("video_slots").doc("slot_0").get());
+  await assertFails(bobDb.collection("live_monitors").doc("lm_1").collection("audio_chunks").doc("slot_0").get());
+
+  // OIC ends the session cleanly
+  await assertSucceeds(
+    oicDb.collection("live_monitors").doc("lm_1").update({
+      status: "ENDED",
+      updatedAtMs: Date.now()
+    })
+  );
+});
+
 
 
 

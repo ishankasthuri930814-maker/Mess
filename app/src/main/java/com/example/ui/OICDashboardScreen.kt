@@ -42,6 +42,8 @@ import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Map
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PersonRemove
 import androidx.compose.material.icons.filled.Phone
@@ -50,6 +52,8 @@ import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.Today
+import androidx.compose.material.icons.filled.Videocam
+import androidx.compose.material.icons.filled.VideocamOff
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -100,6 +104,7 @@ fun OICDashboardScreen(
     val unreadChatCount by viewModel.unreadChatCount.collectAsStateWithLifecycle()
     val isMultiDayShiftMode by viewModel.mapMultiDayShiftMode.collectAsStateWithLifecycle()
     val stationAdminSeed by viewModel.stationAdminSeed.collectAsStateWithLifecycle()
+    val oicLiveMonitorSession by viewModel.oicLiveMonitorSession.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     val dashboardListState = rememberLazyListState()
 
@@ -794,6 +799,7 @@ fun OICDashboardScreen(
                                 SubordinateOfficerCard(
                                     officer = officer,
                                     onCall = { dialPhone(it) },
+                                    onLiveMonitor = { viewModel.startOicLiveMonitor(officer) },
                                     onRemove = { memberToRemove = officer },
                                     onClick = {
                                         viewModel.selectOfficer(officer)
@@ -828,6 +834,7 @@ fun OICDashboardScreen(
                                     officer = member,
                                     isAdminBranch = true,
                                     onCall = { dialPhone(it) },
+                                    onLiveMonitor = { viewModel.startOicLiveMonitor(member) },
                                     onRemove = { memberToRemove = member },
                                     onClick = {
                                         viewModel.selectOfficer(member)
@@ -921,6 +928,7 @@ fun OICDashboardScreen(
                                 onRefreshGps = { viewModel.refreshCurrentLocation(showFeedback = true) },
                                 onOpenEmergencySender = { isSendSosDialogOpen = true },
                                 onExpandFullscreen = { viewModel.openRouteMapDialog() },
+                                onStartLiveMonitor = { officer -> viewModel.startOicLiveMonitor(officer) },
                                 modifier = Modifier.fillMaxSize()
                             )
                         }
@@ -1032,6 +1040,10 @@ fun OICDashboardScreen(
         )
     }
 
+    if (oicLiveMonitorSession != null) {
+        OICLiveMonitorDialog(viewModel = viewModel)
+    }
+
     activeEmergencyPopup?.let { alert ->
         IncomingEmergencyPopupDialog(
             alert = alert,
@@ -1124,10 +1136,12 @@ private fun SubordinateOfficerCard(
     officer: AppUser,
     isAdminBranch: Boolean = false,
     onCall: (String) -> Unit,
+    onLiveMonitor: (() -> Unit)? = null,
     onRemove: (() -> Unit)? = null,
     onClick: () -> Unit
 ) {
     val dutyVisible = officer.isOnDuty && !officer.hideDutyStatus
+    val hasAnyMediaPerm = officer.hasCameraPermission || officer.hasMicPermission
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -1207,6 +1221,66 @@ private fun SubordinateOfficerCard(
                         }
                     }
                 }
+                if (dutyVisible) {
+                    Spacer(modifier = Modifier.height(3.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = if (officer.hasCameraPermission) Icons.Default.Videocam else Icons.Default.VideocamOff,
+                                contentDescription = null,
+                                tint = if (officer.hasCameraPermission) PoliceThemeColors.greenText else PoliceThemeColors.mutedText,
+                                modifier = Modifier.size(12.dp)
+                            )
+                            Spacer(modifier = Modifier.width(2.dp))
+                            Text(
+                                text = if (officer.hasCameraPermission) "Cam" else "Cam ✗",
+                                fontSize = 10.sp,
+                                color = if (officer.hasCameraPermission) PoliceThemeColors.greenText else PoliceThemeColors.mutedText,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = if (officer.hasMicPermission) Icons.Default.Mic else Icons.Default.MicOff,
+                                contentDescription = null,
+                                tint = if (officer.hasMicPermission) PoliceThemeColors.greenText else PoliceThemeColors.mutedText,
+                                modifier = Modifier.size(12.dp)
+                            )
+                            Spacer(modifier = Modifier.width(2.dp))
+                            Text(
+                                text = if (officer.hasMicPermission) "Mic" else "Mic ✗",
+                                fontSize = 10.sp,
+                                color = if (officer.hasMicPermission) PoliceThemeColors.greenText else PoliceThemeColors.mutedText,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+                }
+            }
+
+            if (onLiveMonitor != null && dutyVisible) {
+                IconButton(
+                    onClick = onLiveMonitor,
+                    modifier = Modifier
+                        .size(40.dp)
+                        .background(
+                            if (hasAnyMediaPerm) Color(0xFFDC2626).copy(alpha = 0.14f)
+                            else Color.Gray.copy(alpha = 0.14f),
+                            CircleShape
+                        )
+                        .testTag("oic_live_monitor_btn_${officer.uid}")
+                ) {
+                    Icon(
+                        imageVector = if (officer.hasCameraPermission) Icons.Default.Videocam else Icons.Default.Mic,
+                        contentDescription = "සජීවී කැමරා / ශ්‍රව්‍ය",
+                        tint = if (hasAnyMediaPerm) Color(0xFFDC2626) else PoliceThemeColors.mutedText,
+                        modifier = Modifier.size(19.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.width(4.dp))
             }
 
             if (officer.phoneNumber.isNotBlank()) {
