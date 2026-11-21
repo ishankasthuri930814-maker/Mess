@@ -76,6 +76,7 @@ fun StationChatDialog(
     onDismiss: () -> Unit
 ) {
     val messages by viewModel.stationChatMessages.collectAsStateWithLifecycle()
+    val chatLoadError by viewModel.stationChatError.collectAsStateWithLifecycle()
     val appUser by viewModel.appUser.collectAsStateWithLifecycle()
     val myUid = appUser?.uid.orEmpty()
     val stationTitle = appUser?.stationName?.takeIf { it.isNotBlank() }
@@ -84,6 +85,7 @@ fun StationChatDialog(
 
     var inputText by remember { mutableStateOf("") }
     var isSending by remember { mutableStateOf(false) }
+    var sendError by remember { mutableStateOf<String?>(null) }
     val listState = rememberLazyListState()
 
     LaunchedEffect(Unit) {
@@ -101,13 +103,16 @@ fun StationChatDialog(
         val trimmed = inputText.trim()
         if (trimmed.isBlank() || isSending) return
         isSending = true
+        sendError = null
         viewModel.sendStationChatMessage(
             messageText = trimmed,
             onSuccess = {
                 inputText = ""
+                sendError = null
                 isSending = false
             },
-            onError = {
+            onError = { err ->
+                sendError = err
                 isSending = false
             }
         )
@@ -225,6 +230,24 @@ fun StationChatDialog(
                     }
                 }
 
+                val activeError = sendError ?: chatLoadError
+                if (!activeError.isNullOrBlank()) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.errorContainer,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = activeError,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier
+                                .padding(horizontal = 12.dp, vertical = 6.dp)
+                                .testTag("station_chat_error_text")
+                        )
+                    }
+                }
+
                 // Bottom Composer
                 Surface(
                     color = MaterialTheme.colorScheme.surface,
@@ -239,9 +262,15 @@ fun StationChatDialog(
                     ) {
                         OutlinedTextField(
                             value = inputText,
-                            onValueChange = { if (it.length <= 1000) inputText = it },
+                            onValueChange = {
+                                if (it.length <= 1000) {
+                                    inputText = it
+                                    sendError = null
+                                }
+                            },
                             placeholder = { Text("පණිවිඩයක් ලියන්න...", fontSize = 13.sp) },
-                            maxLines = 4,
+                            singleLine = true,
+                            maxLines = 1,
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                             keyboardActions = KeyboardActions(onSend = { sendCurrentMessage() }),
                             shape = RoundedCornerShape(18.dp),

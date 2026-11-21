@@ -18,11 +18,13 @@ import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.snapshots
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withTimeout
 
 class PoliceRepository(
     private val dao: PoliceDao,
@@ -856,7 +858,7 @@ class PoliceRepository(
 
     // --- Real-Time Station Chat Room ---
     fun observeStationChatMessages(oicStationCode: String): Flow<List<StationChatMessage>> {
-        val cleanStation = oicStationCode.trim().uppercase()
+        val cleanStation = oicStationCode.trim().uppercase().take(64)
         if (cleanStation.isBlank()) return flowOf(emptyList())
         return db.collection("station_chats")
             .whereEqualTo("oicStationCode", cleanStation)
@@ -865,11 +867,6 @@ class PoliceRepository(
                 snapshot.toObjects(StationChatMessage::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
                     .sortedBy { it.createdAt?.toDate()?.time ?: it.createdAtMs }
             }
-            .catch { e ->
-                if (e is CancellationException && e.cause == null) throw e
-                Log.w("PoliceRepository", "Error observing station chat messages", e)
-                emit(emptyList())
-            }
     }
 
     suspend fun sendStationChatMessage(chatMessage: StationChatMessage): Result<Unit> {
@@ -877,9 +874,12 @@ class PoliceRepository(
         if (uid.isBlank()) {
             return Result.failure(IllegalStateException("පණිවිඩ යැවීමට පුරනය වී සිටිය යුතුය."))
         }
-        val cleanStation = chatMessage.oicStationCode.trim().uppercase()
+        val cleanStation = chatMessage.oicStationCode.trim().uppercase().take(64)
         val cleanText = chatMessage.message.trim().take(1000)
-        if (cleanStation.isBlank() || cleanText.isBlank()) {
+        if (cleanStation.isBlank()) {
+            return Result.failure(IllegalArgumentException("ඔබගේ පොලිස් ස්ථාන කේතය හමු නොවීය."))
+        }
+        if (cleanText.isBlank()) {
             return Result.failure(IllegalArgumentException("කරුණාකර පණිවිඩයක් ඇතුළත් කරන්න."))
         }
         return try {
@@ -894,8 +894,13 @@ class PoliceRepository(
                 "createdAtMs" to System.currentTimeMillis(),
                 "createdAt" to FieldValue.serverTimestamp()
             )
-            db.collection("station_chats").document().set(payload).await()
+            withTimeout(12_000L) {
+                db.collection("station_chats").document().set(payload).await()
+            }
             Result.success(Unit)
+        } catch (e: TimeoutCancellationException) {
+            Log.w("PoliceRepository", "Timed out sending station chat message", e)
+            Result.failure(Exception("ජාල සම්බන්ධතාවය මන්දගාමී බැවින් පණිවිඩය යැවීම ප්‍රමාද විය. කරුණාකර නැවත උත්සාහ කරන්න."))
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {

@@ -7,6 +7,7 @@ import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -67,7 +68,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -86,6 +89,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.AppDatabase
 import com.example.data.DutyRecord
@@ -181,6 +187,27 @@ class MainActivity : ComponentActivity() {
             val systemInDark = isSystemInDarkTheme()
             val isDarkTheme = isDarkModeOverride ?: systemInDark
 
+            SideEffect {
+                enableEdgeToEdge(
+                    statusBarStyle = if (isDarkTheme) {
+                        SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+                    } else {
+                        SystemBarStyle.light(
+                            android.graphics.Color.TRANSPARENT,
+                            android.graphics.Color.TRANSPARENT
+                        )
+                    },
+                    navigationBarStyle = if (isDarkTheme) {
+                        SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+                    } else {
+                        SystemBarStyle.light(
+                            android.graphics.Color.TRANSPARENT,
+                            android.graphics.Color.TRANSPARENT
+                        )
+                    }
+                )
+            }
+
             MyApplicationTheme(darkTheme = isDarkTheme) {
                 MainPoliceApp(viewModel = viewModel, isDarkTheme = isDarkTheme)
             }
@@ -227,6 +254,36 @@ fun MainPoliceApp(viewModel: PoliceViewModel, isDarkTheme: Boolean) {
     val isRegistered by viewModel.isRegistered.collectAsStateWithLifecycle()
     val isOICLoggedIn by viewModel.isOICLoggedIn.collectAsStateWithLifecycle()
     val authPortal by viewModel.authPortal.collectAsStateWithLifecycle()
+    val rootContext = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    DisposableEffect(lifecycleOwner, appUser?.uid, appUser?.isOnDuty, appUser?.status) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_RESUME -> {
+                    viewModel.syncLocationTrackingOnLifecycle()
+                }
+                Lifecycle.Event.ON_STOP -> {
+                    val u = appUser
+                    if (u != null &&
+                        u.role == "OFFICER" &&
+                        u.status == "APPROVED" &&
+                        u.isOnDuty &&
+                        !u.pauseLocationLogging &&
+                        !u.hiddenOnMap &&
+                        BackgroundLocationService.hasForegroundLocationPermission(rootContext)
+                    ) {
+                        BackgroundLocationService.startIfAllowed(rootContext, u)
+                    }
+                }
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
 
     // 1. Not signed in with Google -> Try silent auto sign-in first unless user logged out
     if (currentUser == null) {
@@ -279,6 +336,8 @@ fun MainPoliceApp(viewModel: PoliceViewModel, isDarkTheme: Boolean) {
             AuthPortal.OIC -> {
                 BackHandler { viewModel.setAuthPortal(AuthPortal.CHOOSER) }
                 OICLoginScreen(
+                    isDarkTheme = isDarkTheme,
+                    onToggleDarkMode = { viewModel.setDarkMode(!isDarkTheme) },
                     onBack = { viewModel.setAuthPortal(AuthPortal.CHOOSER) },
                     onLoginSuccess = { viewModel.markSignedIn() }
                 )
@@ -286,6 +345,8 @@ fun MainPoliceApp(viewModel: PoliceViewModel, isDarkTheme: Boolean) {
             AuthPortal.ADMIN_BRANCH -> {
                 BackHandler { viewModel.setAuthPortal(AuthPortal.CHOOSER) }
                 AdminBranchLoginScreen(
+                    isDarkTheme = isDarkTheme,
+                    onToggleDarkMode = { viewModel.setDarkMode(!isDarkTheme) },
                     onBack = { viewModel.setAuthPortal(AuthPortal.CHOOSER) },
                     onLoginSuccess = { viewModel.markSignedIn() }
                 )
@@ -293,6 +354,8 @@ fun MainPoliceApp(viewModel: PoliceViewModel, isDarkTheme: Boolean) {
             AuthPortal.OFFICER -> {
                 BackHandler { viewModel.setAuthPortal(AuthPortal.CHOOSER) }
                 OfficerLoginScreen(
+                    isDarkTheme = isDarkTheme,
+                    onToggleDarkMode = { viewModel.setDarkMode(!isDarkTheme) },
                     onBack = { viewModel.setAuthPortal(AuthPortal.CHOOSER) },
                     onLoginSuccess = { viewModel.markSignedIn() }
                 )
@@ -327,7 +390,11 @@ fun MainPoliceApp(viewModel: PoliceViewModel, isDarkTheme: Boolean) {
 
     // 3. User is an OIC -> Dedicated OIC Dashboard Screen
     if (appUser?.role == "OIC") {
-        OICDashboardScreen(viewModel = viewModel)
+        OICDashboardScreen(
+            viewModel = viewModel,
+            isDarkTheme = isDarkTheme,
+            onToggleDarkMode = { viewModel.setDarkMode(!isDarkTheme) }
+        )
         return
     }
 
@@ -376,7 +443,11 @@ fun MainPoliceApp(viewModel: PoliceViewModel, isDarkTheme: Boolean) {
                 }
             }
         } else {
-            AdminBranchDashboardScreen(viewModel = viewModel)
+            AdminBranchDashboardScreen(
+                viewModel = viewModel,
+                isDarkTheme = isDarkTheme,
+                onToggleDarkMode = { viewModel.setDarkMode(!isDarkTheme) }
+            )
         }
         return
     }
@@ -526,7 +597,7 @@ fun MainPoliceApp(viewModel: PoliceViewModel, isDarkTheme: Boolean) {
         contract = ActivityResultContracts.RequestPermission()
     ) { bgGranted ->
         if (bgGranted && isOnDuty) {
-            BackgroundLocationService.startIfAllowed(context)
+            BackgroundLocationService.startIfAllowed(context, appUser)
         }
     }
 
@@ -545,7 +616,7 @@ fun MainPoliceApp(viewModel: PoliceViewModel, isDarkTheme: Boolean) {
                 hasPromptedBgDisclosure = true
                 showBgLocationDisclosureDialog = true
             } else if (isOnDuty) {
-                BackgroundLocationService.startIfAllowed(context)
+                BackgroundLocationService.startIfAllowed(context, appUser)
             }
         }
     }
@@ -577,14 +648,13 @@ fun MainPoliceApp(viewModel: PoliceViewModel, isDarkTheme: Boolean) {
 
     LaunchedEffect(isOnDuty) {
         if (isOnDuty && BackgroundLocationService.hasForegroundLocationPermission(context)) {
+            BackgroundLocationService.startIfAllowed(context, appUser)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
                 !BackgroundLocationService.hasBackgroundLocationPermission(context) &&
                 !hasPromptedBgDisclosure
             ) {
                 hasPromptedBgDisclosure = true
                 showBgLocationDisclosureDialog = true
-            } else {
-                BackgroundLocationService.startIfAllowed(context)
             }
         }
     }
@@ -763,7 +833,7 @@ fun MainPoliceApp(viewModel: PoliceViewModel, isDarkTheme: Boolean) {
                                     },
                                     onClick = {
                                         isMoreMenuExpanded = false
-                                        viewModel.toggleDarkMode()
+                                        viewModel.setDarkMode(!isDarkTheme)
                                     }
                                 )
                             }
@@ -1120,7 +1190,7 @@ fun MainPoliceApp(viewModel: PoliceViewModel, isDarkTheme: Boolean) {
                 TextButton(
                     onClick = {
                         showBgLocationDisclosureDialog = false
-                        if (isOnDuty) BackgroundLocationService.startIfAllowed(context)
+                        if (isOnDuty) BackgroundLocationService.startIfAllowed(context, appUser)
                     }
                 ) {
                     Text("පසුව")

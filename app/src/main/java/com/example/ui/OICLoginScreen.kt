@@ -10,6 +10,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material3.*
@@ -44,6 +46,8 @@ import kotlinx.coroutines.tasks.await
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun OICLoginScreen(
+    isDarkTheme: Boolean = false,
+    onToggleDarkMode: () -> Unit = {},
     onBack: () -> Unit = {},
     onLoginSuccess: () -> Unit
 ) {
@@ -62,6 +66,15 @@ fun OICLoginScreen(
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "ආපසු (Back)"
+                        )
+                    }
+                },
+                actions = {
+                    IconButton(onClick = onToggleDarkMode) {
+                        Icon(
+                            imageVector = if (isDarkTheme) Icons.Default.LightMode else Icons.Default.DarkMode,
+                            contentDescription = "තේමාව මාරු කරන්න",
+                            tint = BadgeGold
                         )
                     }
                 },

@@ -59,7 +59,9 @@ import java.util.Locale
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AdminBranchDashboardScreen(
-    viewModel: PoliceViewModel
+    viewModel: PoliceViewModel,
+    isDarkTheme: Boolean = false,
+    onToggleDarkMode: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val appUser by viewModel.appUser.collectAsStateWithLifecycle()
@@ -144,6 +146,16 @@ fun AdminBranchDashboardScreen(
                         )
                     },
                     actions = {
+                        IconButton(
+                            onClick = onToggleDarkMode,
+                            modifier = Modifier.testTag("admin_gate_theme_toggle_btn")
+                        ) {
+                            Icon(
+                                imageVector = if (isDarkTheme) Icons.Default.LightMode else Icons.Default.DarkMode,
+                                contentDescription = "තේමාව මාරු කරන්න",
+                                tint = BadgeGold
+                            )
+                        }
                         IconButton(onClick = { isLogoutConfirmOpen = true }) {
                             Icon(
                                 imageVector = Icons.AutoMirrored.Filled.Logout,
@@ -407,6 +419,16 @@ fun AdminBranchDashboardScreen(
                         Icon(
                             imageVector = Icons.Default.ContactPhone,
                             contentDescription = "Police Directory",
+                            tint = Color(0xFFFCD34D)
+                        )
+                    }
+                    IconButton(
+                        onClick = onToggleDarkMode,
+                        modifier = Modifier.testTag("admin_theme_toggle_btn")
+                    ) {
+                        Icon(
+                            imageVector = if (isDarkTheme) Icons.Default.LightMode else Icons.Default.DarkMode,
+                            contentDescription = "තේමාව මාරු කරන්න",
                             tint = Color(0xFFFCD34D)
                         )
                     }

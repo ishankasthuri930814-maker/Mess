@@ -37,8 +37,10 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContactPhone
 import androidx.compose.material.icons.filled.Contacts
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Key
+import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PersonRemove
@@ -76,7 +78,9 @@ import java.util.Calendar
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun OICDashboardScreen(
-    viewModel: PoliceViewModel
+    viewModel: PoliceViewModel,
+    isDarkTheme: Boolean = false,
+    onToggleDarkMode: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val appUser by viewModel.appUser.collectAsStateWithLifecycle()
@@ -331,6 +335,16 @@ fun OICDashboardScreen(
                         Icon(
                             imageVector = Icons.Default.SwapHoriz,
                             contentDescription = "Transfer & Handover",
+                            tint = BadgeGold
+                        )
+                    }
+                    IconButton(
+                        onClick = onToggleDarkMode,
+                        modifier = Modifier.testTag("oic_theme_toggle_btn")
+                    ) {
+                        Icon(
+                            imageVector = if (isDarkTheme) Icons.Default.LightMode else Icons.Default.DarkMode,
+                            contentDescription = "තේමාව මාරු කරන්න",
                             tint = BadgeGold
                         )
                     }

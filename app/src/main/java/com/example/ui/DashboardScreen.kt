@@ -54,6 +54,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -61,8 +62,18 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.os.PowerManager
+import android.provider.Settings
+import androidx.compose.material.icons.filled.BatteryChargingFull
 import androidx.compose.material.icons.filled.CalendarMonth
+import androidx.compose.material.icons.filled.GpsFixed
+import androidx.compose.ui.platform.LocalContext
 import com.example.data.DutyAssignment
+import com.example.location.BackgroundLocationService
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -130,6 +141,7 @@ fun DashboardScreen(
         }
     }
 
+    val context = LocalContext.current
     val isOnDuty = appUser?.isOnDuty ?: (latestShift?.type == "ON_DUTY")
 
     LazyColumn(
@@ -254,6 +266,100 @@ fun DashboardScreen(
                         fontSize = 13.sp,
                         maxLines = 1
                     )
+                }
+            }
+        }
+
+        // Background GPS Continuity Status (Visible while ON DUTY)
+        if (isOnDuty && appUser?.pauseLocationLogging != true && appUser?.hiddenOnMap != true) {
+            item {
+                val hasFg = BackgroundLocationService.hasForegroundLocationPermission(context)
+                val hasBg = BackgroundLocationService.hasBackgroundLocationPermission(context)
+                val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+                val ignoringBatteryOpt = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && pm != null) {
+                    pm.isIgnoringBatteryOptimizations(context.packageName)
+                } else {
+                    true
+                }
+                val isFullyOptimal = hasFg && hasBg && ignoringBatteryOpt
+
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("dashboard_bg_gps_status_card"),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (isFullyOptimal) {
+                            DutyActiveGreen.copy(alpha = 0.10f)
+                        } else {
+                            DutyOffOrange.copy(alpha = 0.12f)
+                        }
+                    ),
+                    border = BorderStroke(
+                        1.dp,
+                        if (isFullyOptimal) DutyActiveGreen.copy(alpha = 0.45f) else DutyOffOrange.copy(alpha = 0.5f)
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Icon(
+                            imageVector = if (isFullyOptimal) Icons.Default.GpsFixed else Icons.Default.BatteryChargingFull,
+                            contentDescription = null,
+                            tint = if (isFullyOptimal) PoliceThemeColors.greenText else PoliceThemeColors.orangeText,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = when {
+                                    !hasFg -> "GPS අවසරය අවශ්‍යයි"
+                                    !hasBg -> "පසුබිම් GPS: 'Allow all the time' තෝරන්න"
+                                    !ignoringBatteryOpt -> "පසුබිම් සිතියම අඛණ්ඩව ධාවනයට Battery -> Unrestricted දමන්න"
+                                    else -> "පසුබිම් GPS සක්‍රීයයි • App වසා තිබුණද සිතියම ධාවනය වේ"
+                                },
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                        if (!hasFg || !hasBg || !ignoringBatteryOpt) {
+                            TextButton(
+                                onClick = {
+                                    try {
+                                        if (!hasFg || !hasBg) {
+                                            val appSettings = Intent(
+                                                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                                Uri.fromParts("package", context.packageName, null)
+                                            ).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
+                                            context.startActivity(appSettings)
+                                        } else {
+                                            val batterySettings = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+                                                .apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
+                                            context.startActivity(batterySettings)
+                                        }
+                                    } catch (_: Exception) {
+                                        val fallback = Intent(
+                                            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                            Uri.fromParts("package", context.packageName, null)
+                                        ).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
+                                        context.startActivity(fallback)
+                                    }
+                                },
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                modifier = Modifier.testTag("dashboard_bg_gps_fix_btn")
+                            ) {
+                                Text(
+                                    text = "සකසන්න",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.ExtraBold
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }

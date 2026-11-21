@@ -47,6 +47,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -56,6 +57,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import com.google.firebase.Firebase
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.auth
+import com.google.firebase.firestore.FirebaseFirestoreException
 import com.example.data.AppNotification
 import com.example.data.AppUser
 import com.example.notifications.NotificationHelper
@@ -195,7 +197,7 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
             .putString("cached_role", user.role)
             .putString("cached_status", user.status)
             .putString("cached_oic_email", user.oicEmail)
-            .putString("cached_oic_station_code", user.oicStationCode ?: "")
+            .putString("cached_oic_station_code", (user.oicStationCode ?: "").trim().uppercase())
             .putString("cached_station_name", user.stationName)
             .putString("cached_badge_number", user.badgeNumber)
             .putString("cached_rank", user.rank)
@@ -208,7 +210,7 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
             .putBoolean("cached_hide_duty_status", user.hideDutyStatus)
             .putString("cached_admin_secret_seed", user.adminSecretSeed)
             .putBoolean("explicit_logout", false)
-            .apply()
+            .commit()
     }
 
     private fun loadCachedAppUser(uid: String): AppUser? {
@@ -271,7 +273,7 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
         if (!prevUid.isNullOrBlank()) {
             editor.remove(adminUnlockedPrefKey(prevUid))
         }
-        editor.apply()
+        editor.commit()
     }
 
     fun shouldAttemptAutoSignIn(): Boolean = !prefs.getBoolean("explicit_logout", false)
@@ -808,16 +810,30 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
         auth.currentUser?.uid?.takeIf { it.isNotBlank() }?.let { prefs.getLong(lastReadChatPrefKey(it), 0L) } ?: 0L
     )
 
+    private val _stationChatError = MutableStateFlow<String?>(null)
+    val stationChatError: StateFlow<String?> = _stationChatError.asStateFlow()
+
     @OptIn(ExperimentalCoroutinesApi::class)
     val stationChatMessages: StateFlow<List<StationChatMessage>> = _appUser.flatMapLatest { user ->
         val stationCode = user?.oicStationCode
         if (user != null && user.uid.isNotBlank() && user.status == "APPROVED" && !stationCode.isNullOrBlank()) {
-            repository.observeStationChatMessages(stationCode).catch { e ->
-                if (e is CancellationException && e.cause == null) throw e
-                Log.w("PoliceViewModel", "Error observing station chat", e)
-                emit(emptyList())
-            }
+            repository.observeStationChatMessages(stationCode)
+                .onEach { _stationChatError.value = null }
+                .catch { e ->
+                    val firestoreErr = generateSequence<Throwable>(e) { it.cause }
+                        .filterIsInstance<FirebaseFirestoreException>()
+                        .firstOrNull()
+                    if (e is CancellationException && firestoreErr == null) throw e
+                    Log.w("PoliceViewModel", "Error observing station chat", e)
+                    _stationChatError.value = if (firestoreErr?.code == FirebaseFirestoreException.Code.PERMISSION_DENIED) {
+                        "සංවාද පණිවිඩ කියවීමට අවසර නොමැත (Permission Denied)."
+                    } else {
+                        "සංවාද පණිවිඩ ලබාගැනීමේ දෝෂයකි: ${firestoreErr?.localizedMessage ?: e.localizedMessage ?: "නැවත උත්සාහ කරන්න"}"
+                    }
+                    emit(emptyList())
+                }
         } else {
+            _stationChatError.value = null
             flow { emit(emptyList<StationChatMessage>()) }
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), emptyList())
@@ -847,12 +863,21 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
     fun sendStationChatMessage(
         messageText: String,
         onSuccess: () -> Unit = {},
-        onError: () -> Unit = {}
+        onError: (String) -> Unit = {}
     ) {
         val user = _appUser.value
-        val stationCode = user?.oicStationCode?.trim().orEmpty()
-        if (user == null || stationCode.isBlank()) {
-            onError()
+        if (user == null || user.uid.isBlank()) {
+            onError("පණිවිඩ යැවීමට කරුණාකර ගිණුමට පුරනය වන්න.")
+            return
+        }
+        val stationCode = user.oicStationCode?.trim().orEmpty()
+        if (stationCode.isBlank()) {
+            onError("ඔබගේ පොලිස් ස්ථාන කේතය (Station Code) හමු නොවීය.")
+            return
+        }
+        val cleanMessage = messageText.trim()
+        if (cleanMessage.isBlank()) {
+            onError("කරුණාකර පණිවිඩයක් ඇතුළත් කරන්න.")
             return
         }
         viewModelScope.launch {
@@ -863,15 +888,27 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
                 senderRole = user.role,
                 senderRank = user.rank,
                 senderBadge = user.badgeNumber,
-                message = messageText.trim()
+                message = cleanMessage
             )
             val result = repository.sendStationChatMessage(chatMsg)
             if (result.isSuccess) {
+                _stationChatError.value = null
                 markChatAsRead()
                 onSuccess()
             } else {
-                _userMessage.emit(result.exceptionOrNull()?.localizedMessage ?: "පණිවිඩය යැවීම අසාර්ථක විය.")
-                onError()
+                val ex = result.exceptionOrNull()
+                val firestoreErr = generateSequence(ex) { it.cause }
+                    .filterIsInstance<FirebaseFirestoreException>()
+                    .firstOrNull()
+                val errMsg = when (firestoreErr?.code) {
+                    FirebaseFirestoreException.Code.PERMISSION_DENIED ->
+                        "පණිවිඩ යැවීමට අවසර නොමැත (Firestore Permission Denied)."
+                    FirebaseFirestoreException.Code.UNAVAILABLE ->
+                        "අන්තර්ජාල සම්බන්ධතාවය නොමැත. කරුණාකර පසුව උත්සාහ කරන්න."
+                    else -> ex?.localizedMessage ?: "පණිවිඩය යැවීම අසාර්ථක විය."
+                }
+                _userMessage.emit(errMsg)
+                onError(errMsg)
             }
         }
     }
@@ -1318,11 +1355,12 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
         val localMovedMeters = if (lastLocalTrailTimeMs == 0L) Double.MAX_VALUE
         else GeoRouteUtils.distanceMeters(lastLocalTrailLat, lastLocalTrailLng, location.latitude, location.longitude)
 
+        val cleanStation = user.oicStationCode?.trim()?.uppercase().orEmpty()
         val acceptLocalPoint = when {
             overrideIsOnDuty != null -> true
-            lastLocalTrailTimeMs == 0L -> location.accuracy <= 65f || prevFix == null
-            location.accuracy <= 25f && localMovedMeters >= 3.0 -> true
-            location.accuracy <= 45f && localMovedMeters >= 6.0 -> true
+            lastLocalTrailTimeMs == 0L -> location.accuracy <= 120f || prevFix == null
+            location.accuracy <= 45f && localMovedMeters >= 3.0 -> true
+            location.accuracy <= 85f && localMovedMeters >= 6.0 -> true
             else -> false
         }
 
@@ -1333,9 +1371,9 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
             val pt = LocationHistoryPoint(
                 officerId = user.uid,
                 officerName = user.displayName.ifBlank { user.email },
-                oicStationCode = user.oicStationCode ?: "",
+                oicStationCode = cleanStation,
                 dateKey = today,
-                dayStationKey = "${user.oicStationCode ?: ""}_$today",
+                dayStationKey = "${cleanStation}_$today",
                 officerDayKey = "${user.uid}_$today",
                 lat = location.latitude,
                 lng = location.longitude,
@@ -1371,15 +1409,15 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
                     }
                 }
 
-                // Record cloud GPS trail breadcrumb (5m fine movement or 45s while On Duty / OIC)
+                // Record cloud GPS trail breadcrumb (4m fine movement or 25s while On Duty / OIC)
                 val movedMeters = if (lastBreadcrumbTimeMs == 0L) Double.MAX_VALUE
                 else GeoRouteUtils.distanceMeters(lastBreadcrumbLat, lastBreadcrumbLng, location.latitude, location.longitude)
                 val throttleElapsed = (nowMs - lastBreadcrumbTimeMs) >= 4_500L
-                val isAccurateForTrail = location.accuracy <= 45f || overrideIsOnDuty != null
+                val isAccurateForTrail = location.accuracy <= 100f || overrideIsOnDuty != null
                 val shouldLogBreadcrumb = overrideIsOnDuty != null || (
                     isAccurateForTrail && throttleElapsed &&
                         (latestDuty || user.role == "OIC") &&
-                        (movedMeters >= 5.0 || (nowMs - lastBreadcrumbTimeMs) >= 45_000L || lastBreadcrumbDutyType != dutyTypeStr)
+                        (movedMeters >= 4.0 || (nowMs - lastBreadcrumbTimeMs) >= 25_000L || lastBreadcrumbDutyType != dutyTypeStr)
                     )
 
                 if (shouldLogBreadcrumb) {
@@ -1391,9 +1429,9 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
                         LocationHistoryPoint(
                             officerId = user.uid,
                             officerName = user.displayName.ifBlank { user.email },
-                            oicStationCode = user.oicStationCode ?: "",
+                            oicStationCode = cleanStation,
                             dateKey = today,
-                            dayStationKey = "${user.oicStationCode ?: ""}_$today",
+                            dayStationKey = "${cleanStation}_$today",
                             officerDayKey = "${user.uid}_$today",
                             lat = location.latitude,
                             lng = location.longitude,
@@ -1684,7 +1722,8 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
             !user.hiddenOnMap &&
             hasLocationPermission()
         if (shouldRunBgService) {
-            BackgroundLocationService.startIfAllowed(getApplication())
+            cacheAppUser(user)
+            BackgroundLocationService.startIfAllowed(getApplication(), user)
         } else {
             BackgroundLocationService.stop(getApplication())
         }
@@ -1711,6 +1750,18 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
                 }
             }
         }
+    }
+
+    fun syncLocationTrackingOnLifecycle() {
+        val user = _appUser.value ?: return
+        if (user.status != "APPROVED") return
+        if (!hasLocationPermission()) return
+        if (user.role == "OFFICER" && user.isOnDuty && !user.pauseLocationLogging && !user.hiddenOnMap) {
+            cacheAppUser(user)
+            BackgroundLocationService.startIfAllowed(getApplication(), user)
+        }
+        startRealtimeLocationUpdates()
+        refreshCurrentLocation(showFeedback = false)
     }
 
     private fun isValidPhoneNumber(phone: String): Boolean {
@@ -2359,14 +2410,9 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
         }
     }
 
-    fun toggleDarkMode() {
-        val next = when (_isDarkMode.value) {
-            true -> false
-            false -> true
-            else -> true
-        }
-        _isDarkMode.value = next
-        prefs.edit().putBoolean("is_dark_mode", next).commit()
+    fun toggleDarkMode(currentIsDark: Boolean? = null) {
+        val currentlyDark = currentIsDark ?: (_isDarkMode.value ?: false)
+        setDarkMode(!currentlyDark)
     }
 
     fun setDarkMode(dark: Boolean?) {

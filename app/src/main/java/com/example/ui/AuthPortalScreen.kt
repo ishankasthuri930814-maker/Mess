@@ -29,14 +29,18 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import com.example.R
 import com.example.ui.theme.BadgeGold
 import com.example.ui.theme.BadgeGoldBright
 import com.example.ui.theme.PoliceNavyDark
+import com.example.ui.theme.PoliceNavyPrimary
 
 @Composable
 fun AuthPortalScreen(
@@ -49,17 +53,17 @@ fun AuthPortalScreen(
     val overlayBrush = if (isDarkTheme) {
         Brush.verticalGradient(
             colors = listOf(
-                Color(0xDC020617),
-                Color(0xC80B132B),
-                Color(0xEE020617)
+                Color(0xE0020617),
+                Color(0xCC0B132B),
+                Color(0xF2020617)
             )
         )
     } else {
         Brush.verticalGradient(
             colors = listOf(
-                Color(0xB80F172A),
-                Color(0x881E3A8A),
-                Color(0xD8E2E8F0)
+                Color(0xEDF8FAFC),
+                Color(0xDDE0F2FE),
+                Color(0xF2F1F5F9)
             )
         )
     }
@@ -80,41 +84,7 @@ fun AuthPortalScreen(
                 .background(overlayBrush)
         )
 
-        // Corner Light / Dark Theme Switcher
-        Surface(
-            shape = RoundedCornerShape(24.dp),
-            color = if (isDarkTheme) Color(0xCC1E293B) else Color(0xECFFFFFF),
-            border = BorderStroke(1.dp, BadgeGold.copy(alpha = 0.7f)),
-            shadowElevation = 6.dp,
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .statusBarsPadding()
-                .padding(top = 10.dp, end = 14.dp)
-                .testTag("portal_theme_toggle_pill")
-        ) {
-            Row(
-                modifier = Modifier.padding(4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                ThemeOptionChip(
-                    label = "දිවා",
-                    icon = Icons.Default.LightMode,
-                    selected = !isDarkTheme,
-                    onClick = { onSelectDarkMode(false) },
-                    modifier = Modifier.testTag("portal_light_mode_btn")
-                )
-                ThemeOptionChip(
-                    label = "රාත්‍රී",
-                    icon = Icons.Default.DarkMode,
-                    selected = isDarkTheme,
-                    onClick = { onSelectDarkMode(true) },
-                    modifier = Modifier.testTag("portal_dark_mode_btn")
-                )
-            }
-        }
-
-        // Main Scrollable Portal Selection
+        // Main Scrollable Portal Selection (placed BEFORE the top theme pill in Z-order)
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -125,7 +95,7 @@ fun AuthPortalScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
-            Spacer(modifier = Modifier.height(34.dp))
+            Spacer(modifier = Modifier.height(54.dp))
 
             // Police Shield Emblem
             Box(
@@ -154,7 +124,7 @@ fun AuthPortalScreen(
                 text = "All In One Police",
                 fontSize = 26.sp,
                 fontWeight = FontWeight.ExtraBold,
-                color = Color.White,
+                color = if (isDarkTheme) Color.White else PoliceNavyDark,
                 textAlign = TextAlign.Center
             )
 
@@ -162,7 +132,7 @@ fun AuthPortalScreen(
                 text = "ශ්‍රී ලංකා පොලීසිය",
                 fontSize = 15.sp,
                 fontWeight = FontWeight.Bold,
-                color = BadgeGoldBright,
+                color = if (isDarkTheme) BadgeGoldBright else Color(0xFFB45309),
                 textAlign = TextAlign.Center
             )
 
@@ -170,14 +140,15 @@ fun AuthPortalScreen(
 
             Surface(
                 shape = RoundedCornerShape(12.dp),
-                color = Color.Black.copy(alpha = 0.35f)
+                color = if (isDarkTheme) Color.Black.copy(alpha = 0.42f) else PoliceNavyPrimary.copy(alpha = 0.12f),
+                border = if (isDarkTheme) null else BorderStroke(1.dp, PoliceNavyPrimary.copy(alpha = 0.25f))
             ) {
                 Text(
                     text = "කරුණාකර ඔබගේ පිවිසුම් අංශය තෝරන්න",
                     fontSize = 13.sp,
-                    fontWeight = FontWeight.Medium,
+                    fontWeight = FontWeight.SemiBold,
                     textAlign = TextAlign.Center,
-                    color = Color.White.copy(alpha = 0.95f),
+                    color = if (isDarkTheme) Color.White.copy(alpha = 0.95f) else PoliceNavyDark,
                     modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
                 )
             }
@@ -190,7 +161,11 @@ fun AuthPortalScreen(
                 subtitle = "OIC Chief Portal",
                 description = "අනන්‍ය OIC අංකය, පාලන අංශ රහස් අංකය, නිලධාරීන් කළමනාකරණය, සංවාද කුටිය හා සජීවී සිතියම",
                 icon = Icons.Default.Security,
-                gradient = Brush.horizontalGradient(listOf(Color(0xFF0F172A), Color(0xFF1E3A8A))),
+                gradient = if (isDarkTheme) {
+                    Brush.horizontalGradient(listOf(Color(0xFF0F172A), Color(0xFF1E3A8A)))
+                } else {
+                    Brush.horizontalGradient(listOf(Color(0xFF1E3A8A), Color(0xFF2563EB)))
+                },
                 borderColor = BadgeGoldBright,
                 accentColor = BadgeGoldBright,
                 onClick = onSelectOIC,
@@ -205,9 +180,13 @@ fun AuthPortalScreen(
                 subtitle = "Administration Branch Portal",
                 description = "රාජකාරි යෙදවීම (උපසේවා/මුරසංචාර), ඉදිරි දින රාජකාරි ලේඛනය, දැනුම්දීම් සහ මෙස් ආහාර වාර්තා",
                 icon = Icons.Default.AdminPanelSettings,
-                gradient = Brush.horizontalGradient(listOf(Color(0xFF064E3B), Color(0xFF047857))),
+                gradient = if (isDarkTheme) {
+                    Brush.horizontalGradient(listOf(Color(0xFF064E3B), Color(0xFF047857)))
+                } else {
+                    Brush.horizontalGradient(listOf(Color(0xFF047857), Color(0xFF0D9488)))
+                },
                 borderColor = Color(0xFF34D399),
-                accentColor = Color(0xFF6EE7B7),
+                accentColor = Color(0xFFA7F3D0),
                 onClick = onSelectAdminBranch,
                 modifier = Modifier.testTag("portal_admin_card")
             )
@@ -220,14 +199,55 @@ fun AuthPortalScreen(
                 subtitle = "Police Officer Portal",
                 description = "පැවරුණු රාජකාරි, මෙස් ආහාර, ගමන් සටහන්, කණ්ඩායම් රාජකාරි, සංවාද කුටිය සහ සජීවී GPS",
                 icon = Icons.Default.Person,
-                gradient = Brush.horizontalGradient(listOf(Color(0xFF1E40AF), Color(0xFF0284C7))),
+                gradient = if (isDarkTheme) {
+                    Brush.horizontalGradient(listOf(Color(0xFF1E40AF), Color(0xFF0284C7)))
+                } else {
+                    Brush.horizontalGradient(listOf(Color(0xFF0284C7), Color(0xFF38BDF8)))
+                },
                 borderColor = Color(0xFF7DD3FC),
-                accentColor = Color(0xFFBAE6FD),
+                accentColor = Color(0xFFE0F2FE),
                 onClick = onSelectOfficer,
                 modifier = Modifier.testTag("portal_officer_card")
             )
 
-            Spacer(modifier = Modifier.height(14.dp))
+            Spacer(modifier = Modifier.height(16.dp))
+        }
+
+        // Corner Light / Dark Theme Switcher - declared LAST with zIndex(20f) so scroll Column never intercepts taps
+        Surface(
+            shape = RoundedCornerShape(28.dp),
+            color = if (isDarkTheme) Color(0xF01E293B) else Color(0xF8FFFFFF),
+            border = BorderStroke(1.5.dp, BadgeGold.copy(alpha = 0.85f)),
+            shadowElevation = 8.dp,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .zIndex(20f)
+                .statusBarsPadding()
+                .padding(top = 10.dp, end = 14.dp)
+                .testTag("portal_theme_toggle_pill")
+        ) {
+            Row(
+                modifier = Modifier.padding(4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                ThemeOptionChip(
+                    label = "දිවා",
+                    icon = Icons.Default.LightMode,
+                    selected = !isDarkTheme,
+                    isDarkSurface = isDarkTheme,
+                    onClick = { onSelectDarkMode(false) },
+                    modifier = Modifier.testTag("portal_light_mode_btn")
+                )
+                ThemeOptionChip(
+                    label = "රාත්‍රී",
+                    icon = Icons.Default.DarkMode,
+                    selected = isDarkTheme,
+                    isDarkSurface = isDarkTheme,
+                    onClick = { onSelectDarkMode(true) },
+                    modifier = Modifier.testTag("portal_dark_mode_btn")
+                )
+            }
         }
     }
 }
@@ -237,32 +257,40 @@ private fun ThemeOptionChip(
     label: String,
     icon: ImageVector,
     selected: Boolean,
+    isDarkSurface: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val contentColor = when {
+        selected -> PoliceNavyDark
+        isDarkSurface -> Color.White.copy(alpha = 0.9f)
+        else -> PoliceNavyDark.copy(alpha = 0.8f)
+    }
     Surface(
-        shape = RoundedCornerShape(20.dp),
+        shape = RoundedCornerShape(22.dp),
         color = if (selected) BadgeGoldBright else Color.Transparent,
         modifier = modifier
-            .clip(RoundedCornerShape(20.dp))
+            .heightIn(min = 40.dp)
+            .clip(RoundedCornerShape(22.dp))
+            .semantics { this.selected = selected }
             .clickable { onClick() }
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
+            horizontalArrangement = Arrangement.spacedBy(5.dp)
         ) {
             Icon(
                 imageVector = icon,
                 contentDescription = label,
-                tint = if (selected) PoliceNavyDark else MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(16.dp)
+                tint = contentColor,
+                modifier = Modifier.size(18.dp)
             )
             Text(
                 text = label,
-                fontSize = 11.sp,
+                fontSize = 12.sp,
                 fontWeight = FontWeight.Bold,
-                color = if (selected) PoliceNavyDark else MaterialTheme.colorScheme.onSurfaceVariant
+                color = contentColor
             )
         }
     }
@@ -286,7 +314,7 @@ private fun PortalRoleCard(
             .heightIn(min = 116.dp)
             .clickable { onClick() },
         shape = RoundedCornerShape(24.dp),
-        border = BorderStroke(1.8.dp, borderColor.copy(alpha = 0.8f)),
+        border = BorderStroke(1.8.dp, borderColor.copy(alpha = 0.85f)),
         elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
     ) {
         Row(

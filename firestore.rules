@@ -342,8 +342,10 @@ service cloud.firestore {
     }
 
     match /station_chats/{messageId} {
-      allow read: if isSignedIn() &&
-                     get(/databases/$(database)/documents/users/$(request.auth.uid)).data.oicStationCode == resource.data.oicStationCode;
+      allow read: if isSignedIn() && (
+                     resource.data.senderUid == request.auth.uid ||
+                     get(/databases/$(database)/documents/users/$(request.auth.uid)).data.oicStationCode == resource.data.oicStationCode
+                  );
       allow create: if isSignedIn() && isValidStationChatMessage(incoming());
       allow delete: if isSignedIn() && (resource.data.senderUid == request.auth.uid || isOIC());
     }
