@@ -485,5 +485,115 @@ test("Location history breadcrumbs, lastOffDutyLocation, and Emergency SOS alert
   );
 });
 
+test("OIC can remove station member, Admin Branch can send ALL notification, and station_chats enforces station isolation", async () => {
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    const db = context.firestore();
+    await db.collection("users").doc("oic_col").set({
+      uid: "oic_col",
+      displayName: "OIC Colombo",
+      email: "oic@police.lk",
+      role: "OIC",
+      status: "APPROVED",
+      oicStationCode: "OIC-COL-1001"
+    });
+    await db.collection("users").doc("admin_col").set({
+      uid: "admin_col",
+      displayName: "Admin Colombo",
+      email: "admin@police.lk",
+      role: "ADMIN_BRANCH",
+      status: "APPROVED",
+      oicStationCode: "OIC-COL-1001"
+    });
+    await db.collection("users").doc("alice").set({
+      uid: "alice",
+      displayName: "PC Alice",
+      email: "alice@police.lk",
+      role: "OFFICER",
+      status: "APPROVED",
+      oicStationCode: "OIC-COL-1001",
+      isOnDuty: true
+    });
+    await db.collection("users").doc("kandy_user").set({
+      uid: "kandy_user",
+      displayName: "PC Kandy",
+      email: "kandy@police.lk",
+      role: "OFFICER",
+      status: "APPROVED",
+      oicStationCode: "OIC-KND-9999"
+    });
+  });
+
+  const oicDb = testEnv.authenticatedContext("oic_col").firestore();
+  const adminDb = testEnv.authenticatedContext("admin_col").firestore();
+  const aliceDb = testEnv.authenticatedContext("alice").firestore();
+  const kandyDb = testEnv.authenticatedContext("kandy_user").firestore();
+  const validTime = new Date(Date.now() - 1000);
+
+  // Admin Branch can broadcast ALL notice
+  await assertSucceeds(
+    adminDb.collection("notifications").doc("n_admin_all").set({
+      title: "Admin Duty Notice",
+      message: "Roster updated for next week",
+      senderUid: "admin_col",
+      senderName: "Admin Colombo",
+      senderRole: "ADMIN_BRANCH",
+      targetType: "ALL",
+      targetStationCode: "",
+      targetUid: "",
+      priority: "NORMAL",
+      createdAtMs: Date.now() - 1000,
+      createdAt: validTime
+    })
+  );
+
+  // Officer can update own stealth flags
+  await assertSucceeds(
+    aliceDb.collection("users").doc("alice").update({
+      hiddenFromStationLists: true,
+      hiddenOnMap: true,
+      pauseLocationLogging: true,
+      hideDutyStatus: true
+    })
+  );
+
+  // Station chat creation & isolation
+  await assertSucceeds(
+    aliceDb.collection("station_chats").doc("msg1").set({
+      oicStationCode: "OIC-COL-1001",
+      senderUid: "alice",
+      senderName: "PC Alice",
+      senderRole: "OFFICER",
+      senderRank: "Police Constable (PC)",
+      senderBadge: "81234",
+      message: "Patrol unit reporting at Galle Road.",
+      createdAtMs: Date.now() - 1000,
+      createdAt: validTime
+    })
+  );
+
+  await assertSucceeds(
+    oicDb.collection("station_chats").where("oicStationCode", "==", "OIC-COL-1001").get()
+  );
+
+  // Kandy officer cannot read Colombo station chat
+  await assertFails(
+    kandyDb.collection("station_chats").doc("msg1").get()
+  );
+  await assertFails(
+    kandyDb.collection("station_chats").where("oicStationCode", "==", "OIC-COL-1001").get()
+  );
+
+  // OIC can remove Alice from station
+  await assertSucceeds(
+    oicDb.collection("users").doc("alice").update({
+      oicStationCode: "",
+      status: "REMOVED",
+      isOnDuty: false,
+      updatedAt: validTime
+    })
+  );
+});
+
+
 
 

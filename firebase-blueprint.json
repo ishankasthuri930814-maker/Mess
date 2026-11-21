@@ -18,6 +18,10 @@
             "address": "string",
             "fcmToken": "string",
             "isOnDuty": "boolean",
+            "hiddenFromStationLists": "boolean",
+            "hiddenOnMap": "boolean",
+            "pauseLocationLogging": "boolean",
+            "hideDutyStatus": "boolean",
             "lastLocation": "map",
             "lastOffDutyLocation": "map",
             "updatedAt": "timestamp"
@@ -184,6 +188,23 @@
             "lng": "number",
             "radiusKm": "number",
             "status": "string",
+            "createdAtMs": "number",
+            "createdAt": "timestamp"
+          }
+        }
+      }
+    },
+    "station_chats": {
+      "documents": {
+        "{messageId}": {
+          "fields": {
+            "oicStationCode": "string",
+            "senderUid": "string",
+            "senderName": "string",
+            "senderRole": "string",
+            "senderRank": "string",
+            "senderBadge": "string",
+            "message": "string",
             "createdAtMs": "number",
             "createdAt": "timestamp"
           }

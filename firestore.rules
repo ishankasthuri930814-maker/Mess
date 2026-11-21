@@ -27,14 +27,18 @@ service cloud.firestore {
       return isSignedIn() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'OIC';
     }
 
+    function isAdminBranch() {
+      return isSignedIn() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'ADMIN_BRANCH';
+    }
+
     function isValidUser(data) {
       return data.uid is string &&
              data.displayName is string &&
              data.email is string &&
              data.role in ['OFFICER', 'OIC', 'ADMIN_BRANCH'] &&
-             data.status in ['PENDING', 'APPROVED', 'REJECTED'] &&
+             data.status in ['PENDING', 'APPROVED', 'REJECTED', 'REMOVED'] &&
              (!('oicEmail' in data) || data.oicEmail is string) &&
-             (!('oicStationCode' in data) || data.oicStationCode is string) &&
+             (!('oicStationCode' in data) || data.oicStationCode == null || data.oicStationCode is string) &&
              (!('stationName' in data) || data.stationName is string) &&
              (!('badgeNumber' in data) || data.badgeNumber is string) &&
              (!('rank' in data) || data.rank is string) &&
@@ -42,6 +46,10 @@ service cloud.firestore {
              (!('address' in data) || data.address is string) &&
              (!('fcmToken' in data) || data.fcmToken is string) &&
              (!('isOnDuty' in data) || data.isOnDuty is bool) &&
+             (!('hiddenFromStationLists' in data) || data.hiddenFromStationLists is bool) &&
+             (!('hiddenOnMap' in data) || data.hiddenOnMap is bool) &&
+             (!('pauseLocationLogging' in data) || data.pauseLocationLogging is bool) &&
+             (!('hideDutyStatus' in data) || data.hideDutyStatus is bool) &&
              (!('lastLocation' in data) || data.lastLocation is map) &&
              (!('lastOffDutyLocation' in data) || data.lastOffDutyLocation is map) &&
              (!('adminSecretSeed' in data) || data.adminSecretSeed is string) &&
@@ -69,7 +77,12 @@ service cloud.firestore {
                        (isSignedIn() &&
                         incoming().diff(existing()).affectedKeys().hasOnly(['oicStationCode', 'status']) &&
                         incoming().status in ['PENDING', 'APPROVED'] &&
-                        incoming().oicStationCode is string);
+                        incoming().oicStationCode is string) ||
+                       (isOIC() &&
+                        incoming().diff(existing()).affectedKeys().hasOnly(['oicStationCode', 'status', 'isOnDuty', 'updatedAt']) &&
+                        incoming().status == 'REMOVED' &&
+                        incoming().isOnDuty == false &&
+                        incoming().oicStationCode == "");
     }
 
     function isValidDutyRecord(data) {
@@ -232,7 +245,7 @@ service cloud.firestore {
       allow create: if isSignedIn() &&
         incoming().senderUid == request.auth.uid &&
         isValidNotification(incoming()) &&
-        (incoming().targetType != 'ALL' || isOIC());
+        (incoming().targetType != 'ALL' || isOIC() || isAdminBranch());
       allow delete: if isSignedIn() && resource.data.senderUid == request.auth.uid;
     }
 
@@ -314,6 +327,25 @@ service cloud.firestore {
                        incoming().status in ['ACTIVE', 'RESOLVED'];
       allow delete: if isSignedIn() &&
                        (existing().senderUid == request.auth.uid || isOIC());
+    }
+
+    function isValidStationChatMessage(data) {
+      return data.oicStationCode is string && data.oicStationCode.size() >= 1 && data.oicStationCode.size() <= 64 &&
+             data.senderUid is string && data.senderUid == request.auth.uid &&
+             data.senderName is string && data.senderName.size() >= 1 && data.senderName.size() <= 120 &&
+             data.senderRole in ['OIC', 'ADMIN_BRANCH', 'OFFICER'] &&
+             (!('senderRank' in data) || data.senderRank is string) &&
+             (!('senderBadge' in data) || data.senderBadge is string) &&
+             data.message is string && data.message.size() >= 1 && data.message.size() <= 1000 &&
+             data.createdAtMs is number &&
+             data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    match /station_chats/{messageId} {
+      allow read: if isSignedIn() &&
+                     get(/databases/$(database)/documents/users/$(request.auth.uid)).data.oicStationCode == resource.data.oicStationCode;
+      allow create: if isSignedIn() && isValidStationChatMessage(incoming());
+      allow delete: if isSignedIn() && (resource.data.senderUid == request.auth.uid || isOIC());
     }
   }
 }

@@ -48,6 +48,7 @@ import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Warning
 import com.example.ui.ExportReportDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -131,10 +132,18 @@ import com.example.ui.theme.PoliceThemeColors
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
+import com.example.location.BackgroundLocationService
 import com.example.ui.AdminBranchLoginScreen
 import com.example.ui.AdminBranchRegistrationScreen
 import com.example.ui.AdminBranchDashboardScreen
+import com.example.ui.ChatTopBarButton
+import com.example.ui.LatestInAppNoticeBanner
+import com.example.ui.StationChatDialog
 import com.example.data.DutyAssignment
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.TextButton
 
 enum class Screen(val title: String, val icon: ImageVector, val label: String) {
     DASHBOARD("මුල්", Icons.Default.Dashboard, "Home"),
@@ -260,6 +269,8 @@ fun MainPoliceApp(viewModel: PoliceViewModel, isDarkTheme: Boolean) {
         when (authPortal) {
             AuthPortal.CHOOSER -> {
                 AuthPortalScreen(
+                    isDarkTheme = isDarkTheme,
+                    onSelectDarkMode = { viewModel.setDarkMode(it) },
                     onSelectOIC = { viewModel.setAuthPortal(AuthPortal.OIC) },
                     onSelectAdminBranch = { viewModel.setAuthPortal(AuthPortal.ADMIN_BRANCH) },
                     onSelectOfficer = { viewModel.setAuthPortal(AuthPortal.OFFICER) }
@@ -324,6 +335,8 @@ fun MainPoliceApp(viewModel: PoliceViewModel, isDarkTheme: Boolean) {
     if (appUser?.role == "ADMIN_BRANCH") {
         if (appUser?.status == "PENDING") {
             PendingApprovalScreen(viewModel = viewModel)
+        } else if (appUser?.status == "REMOVED") {
+            RemovedFromStationScreen(viewModel = viewModel)
         } else if (appUser?.status == "REJECTED") {
             Scaffold { padding ->
                 Box(
@@ -371,6 +384,12 @@ fun MainPoliceApp(viewModel: PoliceViewModel, isDarkTheme: Boolean) {
     // 4. User is an Officer awaiting OIC approval
     if (appUser?.role == "OFFICER" && appUser?.status == "PENDING") {
         PendingApprovalScreen(viewModel = viewModel)
+        return
+    }
+
+    // 4b. User was removed from station by OIC
+    if (appUser?.status == "REMOVED") {
+        RemovedFromStationScreen(viewModel = viewModel)
         return
     }
 
@@ -477,8 +496,11 @@ fun MainPoliceApp(viewModel: PoliceViewModel, isDarkTheme: Boolean) {
 
     var isExportReportDialogOpen by remember { mutableStateOf(false) }
     var isNotificationsDialogOpen by remember { mutableStateOf(false) }
+    var isChatDialogOpen by remember { mutableStateOf(false) }
     var isSendSosDialogOpen by remember { mutableStateOf(false) }
     var isMoreMenuExpanded by remember { mutableStateOf(false) }
+    var showBgLocationDisclosureDialog by remember { mutableStateOf(false) }
+    var hasPromptedBgDisclosure by remember { mutableStateOf(false) }
 
     var activePhotoView by remember { mutableStateOf<ActivePhotoView?>(null) }
 
@@ -487,6 +509,8 @@ fun MainPoliceApp(viewModel: PoliceViewModel, isDarkTheme: Boolean) {
     val latestShift by viewModel.latestShiftRecord.collectAsStateWithLifecycle()
     val myTodayAssignedDuty by viewModel.myTodayAssignedDuty.collectAsStateWithLifecycle()
     val unreadNotifCount by viewModel.unreadNotificationCount.collectAsStateWithLifecycle()
+    val notifications by viewModel.notifications.collectAsStateWithLifecycle()
+    val unreadChatCount by viewModel.unreadChatCount.collectAsStateWithLifecycle()
     val nearbyEmergencyAlerts by viewModel.nearbyEmergencyAlerts.collectAsStateWithLifecycle()
     val myCurrentLocation by viewModel.myCurrentLocation.collectAsStateWithLifecycle()
     val activeEmergencyPopup by viewModel.activeEmergencyPopup.collectAsStateWithLifecycle()
@@ -498,6 +522,14 @@ fun MainPoliceApp(viewModel: PoliceViewModel, isDarkTheme: Boolean) {
         contract = ActivityResultContracts.RequestPermission()
     ) { /* Permission granted or denied gracefully */ }
 
+    val backgroundLocationLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { bgGranted ->
+        if (bgGranted && isOnDuty) {
+            BackgroundLocationService.startIfAllowed(context)
+        }
+    }
+
     val locationPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
@@ -505,6 +537,16 @@ fun MainPoliceApp(viewModel: PoliceViewModel, isDarkTheme: Boolean) {
                 permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
         if (granted) {
             viewModel.refreshCurrentLocation()
+            if (isOnDuty &&
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+                !BackgroundLocationService.hasBackgroundLocationPermission(context) &&
+                !hasPromptedBgDisclosure
+            ) {
+                hasPromptedBgDisclosure = true
+                showBgLocationDisclosureDialog = true
+            } else if (isOnDuty) {
+                BackgroundLocationService.startIfAllowed(context)
+            }
         }
     }
 
@@ -530,6 +572,20 @@ fun MainPoliceApp(viewModel: PoliceViewModel, isDarkTheme: Boolean) {
             )
         } else {
             viewModel.refreshCurrentLocation()
+        }
+    }
+
+    LaunchedEffect(isOnDuty) {
+        if (isOnDuty && BackgroundLocationService.hasForegroundLocationPermission(context)) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+                !BackgroundLocationService.hasBackgroundLocationPermission(context) &&
+                !hasPromptedBgDisclosure
+            ) {
+                hasPromptedBgDisclosure = true
+                showBgLocationDisclosureDialog = true
+            } else {
+                BackgroundLocationService.startIfAllowed(context)
+            }
         }
     }
 
@@ -638,6 +694,13 @@ fun MainPoliceApp(viewModel: PoliceViewModel, isDarkTheme: Boolean) {
                                 tint = BadgeGold
                             )
                         }
+
+                        // Chat Room shortcut in top bar
+                        ChatTopBarButton(
+                            unreadCount = unreadChatCount,
+                            tint = BadgeGold,
+                            onClick = { isChatDialogOpen = true }
+                        )
 
                         // Notifications Bell in top bar
                         NotificationBellButton(
@@ -787,6 +850,13 @@ fun MainPoliceApp(viewModel: PoliceViewModel, isDarkTheme: Boolean) {
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
                 )
             }
+
+            LatestInAppNoticeBanner(
+                notifications = notifications,
+                unreadCount = unreadNotifCount,
+                onOpenInbox = { isNotificationsDialogOpen = true },
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+            )
 
             Box(
                 modifier = Modifier
@@ -1010,5 +1080,147 @@ fun MainPoliceApp(viewModel: PoliceViewModel, isDarkTheme: Boolean) {
             originalSizeKb = photo.origKb,
             onDismiss = { activePhotoView = null }
         )
+    }
+
+    if (isChatDialogOpen) {
+        StationChatDialog(
+            viewModel = viewModel,
+            onDismiss = { isChatDialogOpen = false }
+        )
+    }
+
+    if (showBgLocationDisclosureDialog && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        AlertDialog(
+            onDismissRequest = { showBgLocationDisclosureDialog = false },
+            title = {
+                Text(
+                    text = "පසුබිම් GPS සිතියම් පටිගත කිරීම",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp
+                )
+            },
+            text = {
+                Text(
+                    text = "ඔබ ON DUTY වී සිටියදී යෙදුම වසා දැමුවද හෝ තිරය නිවා දැමුවද ඔබගේ මුරසංචාර ගමන් මග සහ රැඳී සිටින ස්ථාන සිතියමේ අඛණ්ඩව සටහන් කිරීමට 'Allow all the time (සෑම විටම අවසර දෙන්න)' තෝරන්න.",
+                    fontSize = 13.sp,
+                    lineHeight = 18.sp
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showBgLocationDisclosureDialog = false
+                        backgroundLocationLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+                    }
+                ) {
+                    Text("අවසර දෙන්න (Continue)")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        showBgLocationDisclosureDialog = false
+                        if (isOnDuty) BackgroundLocationService.startIfAllowed(context)
+                    }
+                ) {
+                    Text("පසුව")
+                }
+            }
+        )
+    }
+}
+
+@Composable
+private fun RemovedFromStationScreen(viewModel: PoliceViewModel) {
+    var newStationCode by remember { mutableStateOf("") }
+    var errorMsg by remember { mutableStateOf<String?>(null) }
+    var isSubmitting by remember { mutableStateOf(false) }
+
+    Scaffold { padding ->
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.padding(24.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Warning,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(64.dp)
+                )
+                Spacer(modifier = Modifier.height(14.dp))
+                Text(
+                    text = "ස්ථාන ලැයිස්තුවෙන් ඉවත් කර ඇත",
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.error,
+                    textAlign = TextAlign.Center
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "ස්ථානාධිපති (OIC) විසින් ඔබව එම පොලිස් ස්ථාන ලැයිස්තුවෙන් ඉවත් කර ඇත. වෙනත් ස්ථානයකට එක්වීමට නව OIC Station Code අංකය ඇතුළත් කරන්න.",
+                    textAlign = TextAlign.Center,
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    lineHeight = 18.sp
+                )
+                Spacer(modifier = Modifier.height(18.dp))
+                OutlinedTextField(
+                    value = newStationCode,
+                    onValueChange = {
+                        newStationCode = it.uppercase()
+                        errorMsg = null
+                    },
+                    label = { Text("නව OIC කේතය (New Station Code)") },
+                    placeholder = { Text("e.g. OIC-CMB-1234") },
+                    singleLine = true,
+                    isError = errorMsg != null,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("removed_rejoin_code_input")
+                )
+                if (errorMsg != null) {
+                    Text(
+                        text = errorMsg!!,
+                        color = MaterialTheme.colorScheme.error,
+                        fontSize = 12.sp,
+                        modifier = Modifier.padding(top = 6.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+                Button(
+                    onClick = {
+                        isSubmitting = true
+                        viewModel.rejoinStationAfterRemoval(
+                            newStationCode = newStationCode,
+                            onSuccess = { isSubmitting = false },
+                            onError = { err ->
+                                isSubmitting = false
+                                errorMsg = err
+                            }
+                        )
+                    },
+                    enabled = newStationCode.isNotBlank() && !isSubmitting,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("removed_rejoin_submit_btn")
+                ) {
+                    Text("නව ස්ථානයට ඉල්ලීම යවන්න")
+                }
+                Spacer(modifier = Modifier.height(10.dp))
+                OutlinedButton(
+                    onClick = { viewModel.logout() },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("ඉවත් වන්න (Sign Out)")
+                }
+            }
+        }
     }
 }

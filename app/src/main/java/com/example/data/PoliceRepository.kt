@@ -53,9 +53,17 @@ class PoliceRepository(
         .map { snapshot ->
             snapshot.toObject(AppUser::class.java)?.let { user ->
                 val explicitOnDuty = snapshot.getBoolean("isOnDuty") ?: user.isOnDuty
+                val hiddenLists = snapshot.getBoolean("hiddenFromStationLists") ?: user.hiddenFromStationLists
+                val hiddenMap = snapshot.getBoolean("hiddenOnMap") ?: user.hiddenOnMap
+                val pauseLog = snapshot.getBoolean("pauseLocationLogging") ?: user.pauseLocationLogging
+                val hideDuty = snapshot.getBoolean("hideDutyStatus") ?: user.hideDutyStatus
                 user.copy(
                     uid = if (user.uid.isBlank()) snapshot.id else user.uid,
-                    isOnDuty = explicitOnDuty
+                    isOnDuty = explicitOnDuty,
+                    hiddenFromStationLists = hiddenLists,
+                    hiddenOnMap = hiddenMap,
+                    pauseLocationLogging = pauseLog,
+                    hideDutyStatus = hideDuty
                 )
             }
         }
@@ -74,6 +82,10 @@ class PoliceRepository(
             "phoneNumber" to user.phoneNumber,
             "address" to user.address,
             "isOnDuty" to user.isOnDuty,
+            "hiddenFromStationLists" to user.hiddenFromStationLists,
+            "hiddenOnMap" to user.hiddenOnMap,
+            "pauseLocationLogging" to user.pauseLocationLogging,
+            "hideDutyStatus" to user.hideDutyStatus,
             "adminSecretSeed" to user.adminSecretSeed,
             "updatedAt" to FieldValue.serverTimestamp()
         )
@@ -128,9 +140,17 @@ class PoliceRepository(
             snapshot.documents.mapNotNull { doc ->
                 doc.toObject(AppUser::class.java)?.let { user ->
                     val explicitOnDuty = doc.getBoolean("isOnDuty") ?: user.isOnDuty
+                    val hiddenLists = doc.getBoolean("hiddenFromStationLists") ?: user.hiddenFromStationLists
+                    val hiddenMap = doc.getBoolean("hiddenOnMap") ?: user.hiddenOnMap
+                    val pauseLog = doc.getBoolean("pauseLocationLogging") ?: user.pauseLocationLogging
+                    val hideDuty = doc.getBoolean("hideDutyStatus") ?: user.hideDutyStatus
                     user.copy(
                         uid = if (user.uid.isBlank()) doc.id else user.uid,
-                        isOnDuty = explicitOnDuty
+                        isOnDuty = explicitOnDuty,
+                        hiddenFromStationLists = hiddenLists,
+                        hiddenOnMap = hiddenMap,
+                        pauseLocationLogging = pauseLog,
+                        hideDutyStatus = hideDuty
                     )
                 }
             }.filter { it.role == "OFFICER" || it.role == "ADMIN_BRANCH" }
@@ -138,6 +158,35 @@ class PoliceRepository(
 
     suspend fun updateOfficerStatus(officerUid: String, status: String) {
         db.collection("users").document(officerUid).update("status", status).await()
+    }
+
+    suspend fun removeMemberFromStation(officerUid: String) {
+        db.collection("users").document(officerUid).update(
+            mapOf(
+                "oicStationCode" to "",
+                "status" to "REMOVED",
+                "isOnDuty" to false,
+                "updatedAt" to FieldValue.serverTimestamp()
+            )
+        ).await()
+    }
+
+    suspend fun updateOfficerStealthSettings(
+        uid: String,
+        hiddenFromStationLists: Boolean,
+        hiddenOnMap: Boolean,
+        pauseLocationLogging: Boolean,
+        hideDutyStatus: Boolean
+    ) {
+        db.collection("users").document(uid).update(
+            mapOf(
+                "hiddenFromStationLists" to hiddenFromStationLists,
+                "hiddenOnMap" to hiddenOnMap,
+                "pauseLocationLogging" to pauseLocationLogging,
+                "hideDutyStatus" to hideDutyStatus,
+                "updatedAt" to FieldValue.serverTimestamp()
+            )
+        ).await()
     }
 
     suspend fun transferOfficer(officerUid: String, newStationCode: String, newStatus: String = "PENDING") {
@@ -761,6 +810,98 @@ class PoliceRepository(
                 Log.w("PoliceRepository", "Error observing officer location history", e)
                 emit(emptyList())
             }
+    }
+
+    fun observeStationLocationHistoryMultiDay(
+        oicStationCode: String,
+        sinceMs: Long
+    ): Flow<List<LocationHistoryPoint>> {
+        val cleanStation = oicStationCode.trim()
+        if (cleanStation.isBlank()) return flowOf(emptyList())
+        return db.collection("location_history")
+            .whereEqualTo("oicStationCode", cleanStation)
+            .snapshots()
+            .map { snapshot ->
+                snapshot.toObjects(LocationHistoryPoint::class.java)
+                    .filter { it.timestamp >= sinceMs }
+                    .sortedBy { it.timestamp }
+            }
+            .catch { e ->
+                if (e is CancellationException && e.cause == null) throw e
+                Log.w("PoliceRepository", "Error observing station multi-day location history", e)
+                emit(emptyList())
+            }
+    }
+
+    fun observeOfficerLocationHistoryMultiDay(
+        officerId: String,
+        sinceMs: Long
+    ): Flow<List<LocationHistoryPoint>> {
+        val cleanUid = officerId.trim()
+        if (cleanUid.isBlank()) return flowOf(emptyList())
+        return db.collection("location_history")
+            .whereEqualTo("officerId", cleanUid)
+            .snapshots()
+            .map { snapshot ->
+                snapshot.toObjects(LocationHistoryPoint::class.java)
+                    .filter { it.timestamp >= sinceMs }
+                    .sortedBy { it.timestamp }
+            }
+            .catch { e ->
+                if (e is CancellationException && e.cause == null) throw e
+                Log.w("PoliceRepository", "Error observing officer multi-day location history", e)
+                emit(emptyList())
+            }
+    }
+
+    // --- Real-Time Station Chat Room ---
+    fun observeStationChatMessages(oicStationCode: String): Flow<List<StationChatMessage>> {
+        val cleanStation = oicStationCode.trim().uppercase()
+        if (cleanStation.isBlank()) return flowOf(emptyList())
+        return db.collection("station_chats")
+            .whereEqualTo("oicStationCode", cleanStation)
+            .snapshots()
+            .map { snapshot ->
+                snapshot.toObjects(StationChatMessage::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                    .sortedBy { it.createdAt?.toDate()?.time ?: it.createdAtMs }
+            }
+            .catch { e ->
+                if (e is CancellationException && e.cause == null) throw e
+                Log.w("PoliceRepository", "Error observing station chat messages", e)
+                emit(emptyList())
+            }
+    }
+
+    suspend fun sendStationChatMessage(chatMessage: StationChatMessage): Result<Unit> {
+        val uid = requireUserId()
+        if (uid.isBlank()) {
+            return Result.failure(IllegalStateException("පණිවිඩ යැවීමට පුරනය වී සිටිය යුතුය."))
+        }
+        val cleanStation = chatMessage.oicStationCode.trim().uppercase()
+        val cleanText = chatMessage.message.trim().take(1000)
+        if (cleanStation.isBlank() || cleanText.isBlank()) {
+            return Result.failure(IllegalArgumentException("කරුණාකර පණිවිඩයක් ඇතුළත් කරන්න."))
+        }
+        return try {
+            val payload = mapOf(
+                "oicStationCode" to cleanStation,
+                "senderUid" to uid,
+                "senderName" to chatMessage.senderName.trim().take(120).ifBlank { "නිලධාරී" },
+                "senderRole" to if (chatMessage.senderRole in listOf("OIC", "ADMIN_BRANCH", "OFFICER")) chatMessage.senderRole else "OFFICER",
+                "senderRank" to chatMessage.senderRank.trim().take(80),
+                "senderBadge" to chatMessage.senderBadge.trim().take(40),
+                "message" to cleanText,
+                "createdAtMs" to System.currentTimeMillis(),
+                "createdAt" to FieldValue.serverTimestamp()
+            )
+            db.collection("station_chats").document().set(payload).await()
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w("PoliceRepository", "Failed to send station chat message", e)
+            Result.failure(e)
+        }
     }
 
     suspend fun sendEmergencyAlert(alert: EmergencyAlert): Result<String> {

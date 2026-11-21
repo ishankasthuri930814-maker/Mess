@@ -79,29 +79,42 @@ object MapMarkerBitmapHelper {
         return BitmapDrawable(context.resources, bitmap)
     }
 
-    fun createStayPointDrawable(context: Context, durationLabel: String): Drawable {
+    fun createStayPointDrawable(
+        context: Context,
+        durationLabel: String,
+        isLongStay: Boolean = false,
+        isOffDutySpot: Boolean = false
+    ): Drawable {
         val density = context.resources.displayMetrics.density
         val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.WHITE
-            textSize = 8f * density
+            textSize = (if (isLongStay) 8.5f else 8f) * density
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
             textAlign = Paint.Align.CENTER
         }
         val tw = textPaint.measureText(durationLabel)
-        val w = maxOf((tw + 10f * density).toInt(), (30f * density).toInt())
-        val h = (18f * density).toInt()
+        val minW = ((if (isLongStay) 38f else 30f) * density).toInt()
+        val w = maxOf((tw + (if (isLongStay) 14f else 10f) * density).toInt(), minW)
+        val h = ((if (isLongStay) 22f else 18f) * density).toInt()
         val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
 
-        val rect = RectF(1f, 1f, w - 1f, h - 1f)
-        val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#6D28D9") }
-        val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.WHITE
-            style = Paint.Style.STROKE
-            strokeWidth = 1.4f * density
+        val fillColor = when {
+            isLongStay -> Color.parseColor("#EA580C") // Distinct vibrant Orange-Red for 20+ min long stay
+            isOffDutySpot -> Color.parseColor("#0F766E")
+            else -> Color.parseColor("#6D28D9") // Purple for short stays < 20 min
         }
-        canvas.drawRoundRect(rect, 9f * density, 9f * density, fill)
-        canvas.drawRoundRect(rect, 9f * density, 9f * density, stroke)
+        val borderColor = if (isLongStay) Color.parseColor("#FEF08A") else Color.WHITE
+
+        val rect = RectF(1.5f, 1.5f, w - 1.5f, h - 1.5f)
+        val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = fillColor }
+        val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = borderColor
+            style = Paint.Style.STROKE
+            strokeWidth = (if (isLongStay) 2.2f else 1.4f) * density
+        }
+        canvas.drawRoundRect(rect, 10f * density, 10f * density, fill)
+        canvas.drawRoundRect(rect, 10f * density, 10f * density, stroke)
         val ty = h / 2f - (textPaint.descent() + textPaint.ascent()) / 2f
         canvas.drawText(durationLabel, w / 2f, ty, textPaint)
         return BitmapDrawable(context.resources, bitmap)

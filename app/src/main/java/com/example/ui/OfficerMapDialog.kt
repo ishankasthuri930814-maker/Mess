@@ -42,11 +42,12 @@ fun OfficerMapDialog(
     val myLocationAccuracy by viewModel.myLocationAccuracyMeters.collectAsStateWithLifecycle()
     val activeRouteState by viewModel.activeRouteState.collectAsStateWithLifecycle()
     val selectedMapDate by viewModel.selectedMapDate.collectAsStateWithLifecycle()
+    val isMultiDayShiftMode by viewModel.mapMultiDayShiftMode.collectAsStateWithLifecycle()
 
     val isOic = appUser?.role == "OIC"
     val isInActiveTeam = !isOic && activeTeamSession?.status == "ACTIVE" && teamTeammates.isNotEmpty()
     val officersForMap = if (isOic) {
-        subordinates
+        subordinates.filter { !it.hiddenOnMap && !it.hiddenFromStationLists }
     } else if (isInActiveTeam) {
         (listOfNotNull(appUser) + teamTeammates).distinctBy { it.uid }
     } else {
@@ -143,6 +144,8 @@ fun OfficerMapDialog(
                         activeRouteState = activeRouteState,
                         selectedDateKey = selectedMapDate,
                         isOicView = isOic,
+                        isMultiDayShiftMode = isMultiDayShiftMode,
+                        onToggleMultiDayShiftMode = { viewModel.setMapMultiDayShiftMode(it) },
                         onSelectDate = { viewModel.selectMapDate(it) },
                         onNavigateToTarget = { target ->
                             viewModel.navigateToLocationOnMap(target, openDialog = false)

@@ -13,7 +13,7 @@ data class AppUser(
     val displayName: String = "",
     val email: String = "",
     val role: String = "OFFICER", // "OFFICER", "OIC", "ADMIN_BRANCH"
-    val status: String = "PENDING", // "PENDING", "APPROVED", "REJECTED"
+    val status: String = "PENDING", // "PENDING", "APPROVED", "REJECTED", "REMOVED"
     val oicEmail: String = "",
     val oicStationCode: String? = null,
     val stationName: String = "",
@@ -25,9 +25,20 @@ data class AppUser(
     @get:PropertyName("isOnDuty")
     @field:PropertyName("isOnDuty")
     val isOnDuty: Boolean = false,
+    @get:PropertyName("hiddenFromStationLists")
+    @field:PropertyName("hiddenFromStationLists")
+    val hiddenFromStationLists: Boolean = false,
+    @get:PropertyName("hiddenOnMap")
+    @field:PropertyName("hiddenOnMap")
+    val hiddenOnMap: Boolean = false,
+    @get:PropertyName("pauseLocationLogging")
+    @field:PropertyName("pauseLocationLogging")
+    val pauseLocationLogging: Boolean = false,
+    @get:PropertyName("hideDutyStatus")
+    @field:PropertyName("hideDutyStatus")
+    val hideDutyStatus: Boolean = false,
     val lastLocation: Map<String, Any>? = null,
     val lastOffDutyLocation: Map<String, Any>? = null,
     val adminSecretSeed: String = "",
     @ServerTimestamp val updatedAt: Timestamp? = null
 )
-

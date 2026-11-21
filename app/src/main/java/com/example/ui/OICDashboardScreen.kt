@@ -28,6 +28,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.Campaign
@@ -40,6 +41,7 @@ import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.PersonRemove
 import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
@@ -90,6 +92,9 @@ fun OICDashboardScreen(
     val activeEmergencyPopup by viewModel.activeEmergencyPopup.collectAsStateWithLifecycle()
     val isRouteMapDialogOpen by viewModel.isRouteMapDialogOpen.collectAsStateWithLifecycle()
     val unreadNotifCount by viewModel.unreadNotificationCount.collectAsStateWithLifecycle()
+    val notifications by viewModel.notifications.collectAsStateWithLifecycle()
+    val unreadChatCount by viewModel.unreadChatCount.collectAsStateWithLifecycle()
+    val isMultiDayShiftMode by viewModel.mapMultiDayShiftMode.collectAsStateWithLifecycle()
     val stationAdminSeed by viewModel.stationAdminSeed.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     val dashboardListState = rememberLazyListState()
@@ -102,6 +107,8 @@ fun OICDashboardScreen(
     var isSendNotificationDialogOpen by remember { mutableStateOf(false) }
     var isSendSosDialogOpen by remember { mutableStateOf(false) }
     var isDirectoryOpen by remember { mutableStateOf(false) }
+    var isChatDialogOpen by remember { mutableStateOf(false) }
+    var memberToRemove by remember { mutableStateOf<AppUser?>(null) }
 
     // Hoisted Tab 1 (Duty Roster) state
     val todayKey = DateTimeUtils.getTodayKey()
@@ -185,14 +192,27 @@ fun OICDashboardScreen(
     }
 
     LaunchedEffect(selectedTab) {
-        if (selectedTab == 3) {
+        if (selectedTab == 4) {
             viewModel.refreshCurrentLocation(showFeedback = false)
         }
     }
 
-    val pendingList = remember(subordinates) { subordinates.filter { it.status == "PENDING" } }
-    val approvedList = remember(subordinates) { subordinates.filter { it.status == "APPROVED" } }
-    val onDutyList = remember(subordinates) { subordinates.filter { it.status == "APPROVED" && it.isOnDuty } }
+    val pendingList = remember(subordinates) {
+        subordinates.filter { it.status == "PENDING" && !it.hiddenFromStationLists }
+    }
+    val approvedOfficers = remember(subordinates) {
+        subordinates.filter {
+            it.status == "APPROVED" && it.role != "ADMIN_BRANCH" && !it.hiddenFromStationLists
+        }
+    }
+    val adminBranchMembers = remember(subordinates) {
+        subordinates.filter {
+            it.status == "APPROVED" && it.role == "ADMIN_BRANCH" && !it.hiddenFromStationLists
+        }
+    }
+    val onDutyList = remember(approvedOfficers) {
+        approvedOfficers.filter { it.isOnDuty && !it.hideDutyStatus }
+    }
 
     var lastPendingCount by remember { mutableIntStateOf(pendingList.size) }
 
@@ -290,6 +310,11 @@ fun OICDashboardScreen(
                             tint = BadgeGold
                         )
                     }
+                    ChatTopBarButton(
+                        unreadCount = unreadChatCount,
+                        tint = BadgeGold,
+                        onClick = { isChatDialogOpen = true }
+                    )
                     IconButton(onClick = { isSendNotificationDialogOpen = true }) {
                         Icon(
                             imageVector = Icons.Default.Campaign,
@@ -327,9 +352,9 @@ fun OICDashboardScreen(
         val recordsOnTargetDate = remember(stationDutyRecords, targetDateKey) {
             stationDutyRecords.filter { DateTimeUtils.formatDate(it.timestamp) == targetDateKey }
         }
-        val rosterEntries = remember(approvedList, recordsOnTargetDate, showPastDutyMode) {
+        val rosterEntries = remember(approvedOfficers, recordsOnTargetDate, showPastDutyMode) {
             val groupedByOfficer = recordsOnTargetDate.groupBy { it.officerId }
-            val officerMap = approvedList.associateBy { it.uid }
+            val officerMap = approvedOfficers.associateBy { it.uid }
             val entries = mutableListOf<Pair<AppUser, List<DutyRecord>>>()
 
             groupedByOfficer.forEach { (uid, recs) ->
@@ -339,7 +364,7 @@ fun OICDashboardScreen(
                 }
             }
             if (!showPastDutyMode) {
-                approvedList.filter { it.isOnDuty && groupedByOfficer[it.uid] == null }.forEach { onDutyOfficer ->
+                approvedOfficers.filter { it.isOnDuty && !it.hideDutyStatus && groupedByOfficer[it.uid] == null }.forEach { onDutyOfficer ->
                     entries.add(onDutyOfficer to emptyList())
                 }
             }
@@ -576,7 +601,7 @@ fun OICDashboardScreen(
                 ) {
                     MetricCard(
                         title = "මුළු නිලධාරීන්",
-                        value = approvedList.size.toString(),
+                        value = approvedOfficers.size.toString(),
                         color = PoliceThemeColors.navyText,
                         modifier = Modifier.weight(1f)
                     )
@@ -615,6 +640,17 @@ fun OICDashboardScreen(
                 }
             }
 
+            // 3b. In-App Latest Notice Banner
+            item(key = "oic_notice_banner") {
+                LatestInAppNoticeBanner(
+                    notifications = notifications,
+                    unreadCount = unreadNotifCount,
+                    onOpenInbox = { isNotificationsDialogOpen = true },
+                    onSendNotice = { isSendNotificationDialogOpen = true },
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
+                )
+            }
+
             // 4. Emergency SOS Banner
             if (emergencyAlerts.isNotEmpty()) {
                 item(key = "oic_sos_banner") {
@@ -624,7 +660,7 @@ fun OICDashboardScreen(
                         myUid = appUser?.uid ?: "",
                         isOic = true,
                         onClickAlertLocation = { alert ->
-                            selectedTab = 3
+                            selectedTab = 4
                             viewModel.navigateToLocationOnMap(
                                 target = MapNavigationTarget(
                                     alertId = alert.id,
@@ -643,7 +679,7 @@ fun OICDashboardScreen(
                 }
             }
 
-            // 5. Tab Navigation (5 Tabs: Officers, Duty Roster, Requests, Map, Station Contacts)
+            // 5. Tab Navigation (6 Tabs: Officers, Admin Branch, Duty Roster, Requests, Map, Station Contacts)
             item(key = "oic_tabs_row") {
                 ScrollableTabRow(
                     selectedTabIndex = selectedTab,
@@ -654,11 +690,23 @@ fun OICDashboardScreen(
                     Tab(
                         selected = selectedTab == 0,
                         onClick = { selectedTab = 0 },
-                        text = { Text("නිලධාරීන් (${approvedList.size})", fontSize = 12.sp, fontWeight = FontWeight.Bold) }
+                        text = { Text("නිලධාරීන් (${approvedOfficers.size})", fontSize = 12.sp, fontWeight = FontWeight.Bold) }
                     )
                     Tab(
                         selected = selectedTab == 1,
                         onClick = { selectedTab = 1 },
+                        modifier = Modifier.testTag("oic_admin_branch_tab"),
+                        text = {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.AdminPanelSettings, contentDescription = null, modifier = Modifier.size(15.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("පාලන අංශය (${adminBranchMembers.size})", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    )
+                    Tab(
+                        selected = selectedTab == 2,
+                        onClick = { selectedTab = 2 },
                         text = {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(Icons.Default.CalendarMonth, contentDescription = null, modifier = Modifier.size(15.dp))
@@ -668,8 +716,8 @@ fun OICDashboardScreen(
                         }
                     )
                     Tab(
-                        selected = selectedTab == 2,
-                        onClick = { selectedTab = 2 },
+                        selected = selectedTab == 3,
+                        onClick = { selectedTab = 3 },
                         text = {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text("ඉල්ලීම්", fontSize = 12.sp, fontWeight = FontWeight.Bold)
@@ -683,8 +731,8 @@ fun OICDashboardScreen(
                         }
                     )
                     Tab(
-                        selected = selectedTab == 3,
-                        onClick = { selectedTab = 3 },
+                        selected = selectedTab == 4,
+                        onClick = { selectedTab = 4 },
                         text = {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(Icons.Default.Map, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -694,8 +742,8 @@ fun OICDashboardScreen(
                         }
                     )
                     Tab(
-                        selected = selectedTab == 4,
-                        onClick = { selectedTab = 4 },
+                        selected = selectedTab == 5,
+                        onClick = { selectedTab = 5 },
                         modifier = Modifier.testTag("oic_station_contacts_tab"),
                         text = {
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -711,7 +759,7 @@ fun OICDashboardScreen(
             // 6. Active Tab Content directly inside the single scrollable LazyColumn
             when (selectedTab) {
                 0 -> {
-                    if (approvedList.isEmpty()) {
+                    if (approvedOfficers.isEmpty()) {
                         item(key = "approved_empty") {
                             Box(
                                 modifier = Modifier
@@ -727,11 +775,12 @@ fun OICDashboardScreen(
                             }
                         }
                     } else {
-                        items(approvedList, key = { "approved_${it.uid}" }) { officer ->
+                        items(approvedOfficers, key = { "approved_${it.uid}" }) { officer ->
                             Box(modifier = Modifier.padding(horizontal = 12.dp)) {
                                 SubordinateOfficerCard(
                                     officer = officer,
                                     onCall = { dialPhone(it) },
+                                    onRemove = { memberToRemove = officer },
                                     onClick = {
                                         viewModel.selectOfficer(officer)
                                         isDetailDialogOpen = true
@@ -743,6 +792,40 @@ fun OICDashboardScreen(
                 }
 
                 1 -> {
+                    if (adminBranchMembers.isEmpty()) {
+                        item(key = "admin_branch_empty") {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 24.dp, vertical = 32.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "දැනට මෙම පොලිස් ස්ථානයට අනුයුක්ත පාලන අංශ සාමාජිකයින් (Admin Branch) නොමැත.",
+                                    textAlign = TextAlign.Center,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    } else {
+                        items(adminBranchMembers, key = { "admin_branch_${it.uid}" }) { member ->
+                            Box(modifier = Modifier.padding(horizontal = 12.dp)) {
+                                SubordinateOfficerCard(
+                                    officer = member,
+                                    isAdminBranch = true,
+                                    onCall = { dialPhone(it) },
+                                    onRemove = { memberToRemove = member },
+                                    onClick = {
+                                        viewModel.selectOfficer(member)
+                                        isDetailDialogOpen = true
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+
+                2 -> {
                     dutyRosterByDateItems(
                         todayKey = todayKey,
                         showPastMode = showPastDutyMode,
@@ -767,7 +850,7 @@ fun OICDashboardScreen(
                     )
                 }
 
-                2 -> {
+                3 -> {
                     if (pendingList.isEmpty()) {
                         item(key = "pending_empty") {
                             Box(
@@ -796,7 +879,7 @@ fun OICDashboardScreen(
                     }
                 }
 
-                3 -> {
+                4 -> {
                     item(key = "oic_live_map") {
                         Box(
                             modifier = Modifier
@@ -805,7 +888,7 @@ fun OICDashboardScreen(
                                 .padding(horizontal = 12.dp, vertical = 4.dp)
                         ) {
                             PoliceLiveMapView(
-                                officers = approvedList,
+                                officers = approvedOfficers.filter { !it.hiddenOnMap },
                                 locationHistory = stationLocationHistory,
                                 emergencyAlerts = emergencyAlerts,
                                 myLocation = myLocation,
@@ -813,6 +896,8 @@ fun OICDashboardScreen(
                                 activeRouteState = activeRouteState,
                                 selectedDateKey = selectedMapDate,
                                 isOicView = true,
+                                isMultiDayShiftMode = isMultiDayShiftMode,
+                                onToggleMultiDayShiftMode = { viewModel.setMapMultiDayShiftMode(it) },
                                 onSelectDate = { viewModel.selectMapDate(it) },
                                 onNavigateToTarget = { target ->
                                     viewModel.navigateToLocationOnMap(target, openDialog = false)
@@ -828,7 +913,7 @@ fun OICDashboardScreen(
                     }
                 }
 
-                4 -> {
+                5 -> {
                     stationContactsItems(
                         appUser = appUser,
                         stationContacts = stationContacts,
@@ -891,8 +976,30 @@ fun OICDashboardScreen(
     if (isSendNotificationDialogOpen) {
         SendNotificationDialog(
             viewModel = viewModel,
-            subordinates = approvedList,
+            subordinates = approvedOfficers + adminBranchMembers,
             onDismiss = { isSendNotificationDialogOpen = false }
+        )
+    }
+
+    if (isChatDialogOpen) {
+        StationChatDialog(
+            viewModel = viewModel,
+            onDismiss = { isChatDialogOpen = false }
+        )
+    }
+
+    memberToRemove?.let { target ->
+        OicPasscodeRemoveMemberDialog(
+            member = target,
+            onDismiss = { memberToRemove = null },
+            onConfirm = { enteredPin, onErr ->
+                viewModel.removeOfficerFromStationWithPasscode(
+                    targetMember = target,
+                    enteredPasscode = enteredPin,
+                    onSuccess = { memberToRemove = null },
+                    onError = onErr
+                )
+            }
         )
     }
 
@@ -917,7 +1024,7 @@ fun OICDashboardScreen(
             myLocation = myLocation,
             onShowRouteOnMap = {
                 viewModel.dismissEmergencyPopup()
-                selectedTab = 3
+                selectedTab = 4
                 viewModel.navigateToLocationOnMap(
                     target = MapNavigationTarget(
                         alertId = alert.id,
@@ -1001,9 +1108,12 @@ private fun MetricCard(
 @Composable
 private fun SubordinateOfficerCard(
     officer: AppUser,
+    isAdminBranch: Boolean = false,
     onCall: (String) -> Unit,
+    onRemove: (() -> Unit)? = null,
     onClick: () -> Unit
 ) {
+    val dutyVisible = officer.isOnDuty && !officer.hideDutyStatus
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -1022,15 +1132,23 @@ private fun SubordinateOfficerCard(
                 modifier = Modifier
                     .size(46.dp)
                     .background(
-                        if (officer.isOnDuty) DutyActiveGreen.copy(alpha = 0.15f) else Color.Gray.copy(alpha = 0.15f),
+                        when {
+                            isAdminBranch -> BadgeGold.copy(alpha = 0.2f)
+                            dutyVisible -> DutyActiveGreen.copy(alpha = 0.15f)
+                            else -> Color.Gray.copy(alpha = 0.15f)
+                        },
                         CircleShape
                     ),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    imageVector = Icons.Default.Person,
+                    imageVector = if (isAdminBranch) Icons.Default.AdminPanelSettings else Icons.Default.Person,
                     contentDescription = null,
-                    tint = if (officer.isOnDuty) PoliceThemeColors.greenText else PoliceThemeColors.mutedText,
+                    tint = when {
+                        isAdminBranch -> PoliceThemeColors.goldText
+                        dutyVisible -> PoliceThemeColors.greenText
+                        else -> PoliceThemeColors.mutedText
+                    },
                     modifier = Modifier.size(26.dp)
                 )
             }
@@ -1045,7 +1163,11 @@ private fun SubordinateOfficerCard(
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
-                    text = "${officer.rank.ifBlank { "Officer" }} • ${officer.badgeNumber.ifBlank { "No badge" }}",
+                    text = if (isAdminBranch) {
+                        "පාලන අංශය • ${officer.rank.ifBlank { "Admin Branch" }} • ${officer.badgeNumber.ifBlank { "N/A" }}"
+                    } else {
+                        "${officer.rank.ifBlank { "Officer" }} • ${officer.badgeNumber.ifBlank { "No badge" }}"
+                    },
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -1057,16 +1179,18 @@ private fun SubordinateOfficerCard(
                         fontWeight = FontWeight.SemiBold
                     )
                 }
-                officer.lastLocation?.let { loc ->
-                    val lat = (loc["lat"] as? Number)?.toDouble() ?: 0.0
-                    val lng = (loc["lng"] as? Number)?.toDouble() ?: 0.0
-                    val ts = (loc["timestamp"] as? Number)?.toLong() ?: 0L
-                    if (lat != 0.0) {
-                        Text(
-                            text = "GPS: ${String.format("%.4f", lat)}, ${String.format("%.4f", lng)} (${DateTimeUtils.formatTime(ts)})",
-                            fontSize = 10.sp,
-                            color = PoliceThemeColors.navyText
-                        )
+                if (!officer.hiddenOnMap) {
+                    officer.lastLocation?.let { loc ->
+                        val lat = (loc["lat"] as? Number)?.toDouble() ?: 0.0
+                        val lng = (loc["lng"] as? Number)?.toDouble() ?: 0.0
+                        val ts = (loc["timestamp"] as? Number)?.toLong() ?: 0L
+                        if (lat != 0.0) {
+                            Text(
+                                text = "GPS: ${String.format("%.4f", lat)}, ${String.format("%.4f", lng)} (${DateTimeUtils.formatTime(ts)})",
+                                fontSize = 10.sp,
+                                color = PoliceThemeColors.navyText
+                            )
+                        }
                     }
                 }
             }
@@ -1075,25 +1199,53 @@ private fun SubordinateOfficerCard(
                 IconButton(
                     onClick = { onCall(officer.phoneNumber) },
                     modifier = Modifier
-                        .size(42.dp)
+                        .size(40.dp)
                         .background(DutyActiveGreen.copy(alpha = 0.14f), CircleShape)
                 ) {
                     Icon(
                         imageVector = Icons.Default.Call,
                         contentDescription = "Call Officer",
                         tint = PoliceThemeColors.greenText,
-                        modifier = Modifier.size(20.dp)
+                        modifier = Modifier.size(19.dp)
                     )
                 }
-                Spacer(modifier = Modifier.width(6.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+            }
+
+            if (onRemove != null) {
+                IconButton(
+                    onClick = onRemove,
+                    modifier = Modifier
+                        .size(40.dp)
+                        .background(MaterialTheme.colorScheme.error.copy(alpha = 0.12f), CircleShape)
+                        .testTag("oic_remove_member_${officer.uid}")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.PersonRemove,
+                        contentDescription = "Remove from station",
+                        tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(19.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.width(4.dp))
             }
 
             Surface(
                 shape = RoundedCornerShape(10.dp),
-                color = if (officer.isOnDuty) DutyActiveGreen else Color(0xFF475569)
+                color = when {
+                    officer.hideDutyStatus -> Color(0xFF64748B)
+                    isAdminBranch -> Color(0xFF0F766E)
+                    officer.isOnDuty -> DutyActiveGreen
+                    else -> Color(0xFF475569)
+                }
             ) {
                 Text(
-                    text = if (officer.isOnDuty) "ON DUTY" else "OFF DUTY",
+                    text = when {
+                        officer.hideDutyStatus -> "සඟවා ඇත"
+                        isAdminBranch -> "පාලන අංශය"
+                        officer.isOnDuty -> "ON DUTY"
+                        else -> "OFF DUTY"
+                    },
                     color = Color.White,
                     fontSize = 10.sp,
                     fontWeight = FontWeight.Bold,
@@ -1205,7 +1357,14 @@ private fun LazyListScope.dutyRosterByDateItems(
                 shape = RoundedCornerShape(14.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-                border = BorderStroke(1.dp, if (officer.isOnDuty && !showPastMode) DutyActiveGreen.copy(alpha = 0.5f) else Color.Transparent)
+                border = BorderStroke(
+                    1.dp,
+                    if (officer.isOnDuty && !officer.hideDutyStatus && !showPastMode) {
+                        DutyActiveGreen.copy(alpha = 0.5f)
+                    } else {
+                        Color.Transparent
+                    }
+                )
             ) {
                 Column(modifier = Modifier.padding(12.dp)) {
                     Row(
@@ -1234,10 +1393,18 @@ private fun LazyListScope.dutyRosterByDateItems(
                         if (!showPastMode) {
                             Surface(
                                 shape = RoundedCornerShape(8.dp),
-                                color = if (officer.isOnDuty) DutyActiveGreen else Color(0xFF475569)
+                                color = when {
+                                    officer.hideDutyStatus -> Color(0xFF64748B)
+                                    officer.isOnDuty -> DutyActiveGreen
+                                    else -> Color(0xFF475569)
+                                }
                             ) {
                                 Text(
-                                    text = if (officer.isOnDuty) "ON DUTY" else "COMPLETED",
+                                    text = when {
+                                        officer.hideDutyStatus -> "සඟවා ඇත"
+                                        officer.isOnDuty -> "ON DUTY"
+                                        else -> "COMPLETED"
+                                    },
                                     color = Color.White,
                                     fontSize = 10.sp,
                                     fontWeight = FontWeight.Bold,

@@ -1,5 +1,6 @@
 package com.example.util
 
+import com.example.data.DutyRecord
 import com.example.data.LocationHistoryPoint
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -35,6 +36,7 @@ data class RouteResult(
 object GeoRouteUtils {
 
     private const val EARTH_RADIUS_METERS = 6371000.0
+    const val LONG_STAY_THRESHOLD_MINUTES = 20L
 
     fun distanceMeters(lat1: Double, lng1: Double, lat2: Double, lng2: Double): Double {
         val dLat = Math.toRadians(lat2 - lat1)
@@ -71,6 +73,92 @@ object GeoRouteUtils {
             }
         }
         return total
+    }
+
+    /**
+     * Filters GPS spikes/jitter and applies Chaikin corner smoothing so travel trails render smoothly.
+     */
+    fun filterAndSmoothTrail(points: List<LocationHistoryPoint>): List<Pair<Double, Double>> {
+        val sorted = points.filter { it.lat != 0.0 || it.lng != 0.0 }.sortedBy { it.timestamp }
+        if (sorted.size <= 2) {
+            return sorted.map { Pair(it.lat, it.lng) }
+        }
+
+        // 1. De-noise impossible speed spikes & sub-2m jitter while keeping endpoints
+        val clean = mutableListOf(sorted.first())
+        for (i in 1 until sorted.size - 1) {
+            val prev = clean.last()
+            val curr = sorted[i]
+            val dist = distanceMeters(prev.lat, prev.lng, curr.lat, curr.lng)
+            val dtSec = ((curr.timestamp - prev.timestamp) / 1000.0).coerceAtLeast(1.0)
+            val speedMps = dist / dtSec
+            // Reject implausible teleport (> 65 m/s = 234 km/h) or tiny noise (< 2.0 m)
+            if (dist >= 2.0 && speedMps <= 65.0) {
+                clean.add(curr)
+            }
+        }
+        val last = sorted.last()
+        if (clean.last().lat != last.lat || clean.last().lng != last.lng) {
+            val tailDist = distanceMeters(clean.last().lat, clean.last().lng, last.lat, last.lng)
+            val tailDtSec = ((last.timestamp - clean.last().timestamp) / 1000.0).coerceAtLeast(1.0)
+            if (tailDist / tailDtSec <= 65.0) {
+                clean.add(last)
+            }
+        }
+
+        var coords = clean.map { Pair(it.lat, it.lng) }
+        if (coords.size < 3) return coords
+
+        // 2. Apply 2 passes of Chaikin corner-cutting for smooth road curves (break if huge segment jump > 250m)
+        repeat(2) {
+            val smoothed = ArrayList<Pair<Double, Double>>(coords.size * 2)
+            smoothed.add(coords.first())
+            for (i in 0 until coords.size - 1) {
+                val p0 = coords[i]
+                val p1 = coords[i + 1]
+                val segDist = distanceMeters(p0.first, p0.second, p1.first, p1.second)
+                if (segDist <= 250.0) {
+                    val q = Pair(0.75 * p0.first + 0.25 * p1.first, 0.75 * p0.second + 0.25 * p1.second)
+                    val r = Pair(0.25 * p0.first + 0.75 * p1.first, 0.25 * p0.second + 0.75 * p1.second)
+                    smoothed.add(q)
+                    smoothed.add(r)
+                } else {
+                    smoothed.add(p0)
+                    smoothed.add(p1)
+                }
+            }
+            smoothed.add(coords.last())
+            coords = smoothed
+        }
+        return coords
+    }
+
+    /**
+     * Resolves the timestamp window start for an officer's continuous ON_DUTY -> OFF_DUTY shift
+     * (supports multi-day shifts spanning consecutive calendar days).
+     */
+    fun resolveShiftWindowStartMs(
+        dutyRecords: List<DutyRecord>,
+        nowMs: Long = System.currentTimeMillis(),
+        maxLookbackDays: Int = 14
+    ): Long {
+        val oldestAllowed = nowMs - maxLookbackDays * 24L * 60L * 60L * 1000L
+        val shiftRecords = dutyRecords
+            .filter { it.type == "ON_DUTY" || it.type == "OFF_DUTY" }
+            .sortedByDescending { it.timestamp }
+        val latestShift = shiftRecords.firstOrNull()
+        val startMs = when {
+            latestShift == null -> nowMs - 24L * 60L * 60L * 1000L
+            latestShift.type == "ON_DUTY" -> latestShift.timestamp
+            else -> {
+                // Find the matching ON_DUTY immediately preceding this OFF_DUTY
+                val matchingOn = shiftRecords.firstOrNull {
+                    it.type == "ON_DUTY" && it.timestamp <= latestShift.timestamp
+                }
+                matchingOn?.timestamp ?: (nowMs - 24L * 60L * 60L * 1000L)
+            }
+        }
+        return startMs.coerceAtLeast(oldestAllowed)
     }
 
     fun extractLatLng(locMap: Map<String, Any>?): Triple<Double, Double, Long>? {

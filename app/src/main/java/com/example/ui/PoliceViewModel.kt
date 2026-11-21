@@ -16,9 +16,12 @@ import com.example.data.PoliceRepository
 import com.example.data.EmergencyAlert
 import com.example.data.LocationHistoryPoint
 import com.example.data.RunningChartRecord
+import com.example.data.StationChatMessage
 import com.example.data.TeamDutyMember
 import com.example.data.TeamDutySession
+import com.example.location.BackgroundLocationService
 import android.util.Log
+import com.example.util.ChatSoundHelper
 import com.example.util.DateTimeUtils
 import com.example.util.DutySlotRules
 import com.example.util.GeoRouteUtils
@@ -199,6 +202,10 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
             .putString("cached_phone_number", user.phoneNumber)
             .putString("cached_address", user.address)
             .putBoolean("cached_is_on_duty", user.isOnDuty)
+            .putBoolean("cached_hidden_from_lists", user.hiddenFromStationLists)
+            .putBoolean("cached_hidden_on_map", user.hiddenOnMap)
+            .putBoolean("cached_pause_location_logging", user.pauseLocationLogging)
+            .putBoolean("cached_hide_duty_status", user.hideDutyStatus)
             .putString("cached_admin_secret_seed", user.adminSecretSeed)
             .putBoolean("explicit_logout", false)
             .apply()
@@ -223,12 +230,17 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
             phoneNumber = prefs.getString("cached_phone_number", "") ?: "",
             address = prefs.getString("cached_address", "") ?: "",
             isOnDuty = prefs.getBoolean("cached_is_on_duty", false),
+            hiddenFromStationLists = prefs.getBoolean("cached_hidden_from_lists", false),
+            hiddenOnMap = prefs.getBoolean("cached_hidden_on_map", false),
+            pauseLocationLogging = prefs.getBoolean("cached_pause_location_logging", false),
+            hideDutyStatus = prefs.getBoolean("cached_hide_duty_status", false),
             adminSecretSeed = prefs.getString("cached_admin_secret_seed", "") ?: ""
         )
     }
 
     private fun teamDutyPrefKey(uid: String) = "active_team_duty_id_$uid"
     private fun lastReadNotifPrefKey(uid: String) = "last_read_notif_ms_$uid"
+    private fun lastReadChatPrefKey(uid: String) = "last_read_chat_ms_$uid"
     private fun adminUnlockedPrefKey(uid: String) = "admin_unlocked_date_$uid"
 
     private fun clearCachedAppUser() {
@@ -247,6 +259,10 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
             .remove("cached_phone_number")
             .remove("cached_address")
             .remove("cached_is_on_duty")
+            .remove("cached_hidden_from_lists")
+            .remove("cached_hidden_on_map")
+            .remove("cached_pause_location_logging")
+            .remove("cached_hide_duty_status")
             .remove("cached_admin_secret_seed")
             .remove("active_team_duty_id")
             .remove("admin_unlocked_date")
@@ -467,19 +483,29 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
     private val _selectedMapDate = MutableStateFlow(DateTimeUtils.getTodayKey())
     val selectedMapDate: StateFlow<String> = _selectedMapDate.asStateFlow()
 
+    private val _mapMultiDayShiftMode = MutableStateFlow(true)
+    val mapMultiDayShiftMode: StateFlow<Boolean> = _mapMultiDayShiftMode.asStateFlow()
+
+    fun setMapMultiDayShiftMode(enabled: Boolean) {
+        _mapMultiDayShiftMode.value = enabled
+    }
+
     fun selectMapDate(dateKey: String) {
         if (dateKey.isNotBlank()) {
             _selectedMapDate.value = dateKey
+            _mapMultiDayShiftMode.value = false
         }
     }
 
     private fun mergeTrailWithLiveLocal(
         remote: List<LocationHistoryPoint>,
         local: List<LocationHistoryPoint>,
-        dateKey: String
+        dateKey: String,
+        isMultiDayShift: Boolean
     ): List<LocationHistoryPoint> {
-        if (dateKey != DateTimeUtils.getTodayKey() || local.isEmpty()) return remote
-        val merged = (remote + local.filter { it.dateKey == dateKey })
+        if ((!isMultiDayShift && dateKey != DateTimeUtils.getTodayKey()) || local.isEmpty()) return remote
+        val filteredLocal = if (isMultiDayShift) local else local.filter { it.dateKey == dateKey }
+        val merged = (remote + filteredLocal)
             .distinctBy { "${it.officerId}_${it.timestamp / 2000L}_${(it.lat * 100_000).toLong()}_${(it.lng * 100_000).toLong()}" }
             .sortedBy { it.timestamp }
         return merged
@@ -488,13 +514,36 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
     @OptIn(ExperimentalCoroutinesApi::class)
     private val remoteStationLocationHistory = combine(
         _appUser,
-        _selectedMapDate
-    ) { user, dateKey ->
-        Pair(user, dateKey)
-    }.flatMapLatest { (user, dateKey) ->
+        _selectedMapDate,
+        _mapMultiDayShiftMode
+    ) { user, dateKey, isMultiDay ->
+        Triple(user, dateKey, isMultiDay)
+    }.flatMapLatest { (user, dateKey, isMultiDay) ->
         val stationCode = user?.oicStationCode
         if (user?.role == "OIC" && !stationCode.isNullOrBlank()) {
-            repository.observeStationLocationHistory(stationCode, dateKey).catch { e ->
+            val baseFlow = if (isMultiDay) {
+                val fourteenDaysAgoMs = System.currentTimeMillis() - 14L * 24L * 60L * 60L * 1000L
+                combine(
+                    repository.observeStationLocationHistoryMultiDay(stationCode, fourteenDaysAgoMs),
+                    stationDutyRecords
+                ) { pts, duties ->
+                    val dutiesByOfficer = duties.groupBy { it.officerId }
+                    val nowMs = System.currentTimeMillis()
+                    val windowStartByOfficer = dutiesByOfficer.mapValues { (_, recs) ->
+                        GeoRouteUtils.resolveShiftWindowStartMs(recs, nowMs = nowMs)
+                    }
+                    pts.filter { pt ->
+                        val minTs = windowStartByOfficer[pt.officerId] ?: (nowMs - 24L * 60L * 60L * 1000L)
+                        pt.timestamp >= minTs
+                    }
+                }
+            } else {
+                repository.observeStationLocationHistory(stationCode, dateKey)
+            }
+            combine(baseFlow, subordinates) { pts, subs ->
+                val hiddenIds = subs.filter { it.hiddenOnMap || it.hiddenFromStationLists }.map { it.uid }.toSet()
+                if (hiddenIds.isEmpty()) pts else pts.filter { it.officerId !in hiddenIds }
+            }.catch { e ->
                 if (e is CancellationException && e.cause == null) throw e
                 Log.w("PoliceViewModel", "Error observing station location history", e)
                 emit(emptyList())
@@ -507,23 +556,44 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
     val stationLocationHistory: StateFlow<List<LocationHistoryPoint>> = combine(
         remoteStationLocationHistory,
         _liveLocalTrail,
-        _selectedMapDate
-    ) { remote, local, dateKey ->
-        mergeTrailWithLiveLocal(remote, local, dateKey)
+        _selectedMapDate,
+        _mapMultiDayShiftMode
+    ) { remote, local, dateKey, isMultiDay ->
+        val user = _appUser.value
+        val safeLocal = if (user?.role == "OIC" && (user.hiddenOnMap || user.pauseLocationLogging)) emptyList() else local
+        mergeTrailWithLiveLocal(remote, safeLocal, dateKey, isMultiDay)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), emptyList())
 
     @OptIn(ExperimentalCoroutinesApi::class)
     private val remoteMyLocationHistory = combine(
         _appUser,
-        _selectedMapDate
-    ) { user, dateKey ->
-        Pair(user, dateKey)
-    }.flatMapLatest { (user, dateKey) ->
+        _selectedMapDate,
+        _mapMultiDayShiftMode
+    ) { user, dateKey, isMultiDay ->
+        Triple(user, dateKey, isMultiDay)
+    }.flatMapLatest { (user, dateKey, isMultiDay) ->
         if (user != null && user.uid.isNotBlank()) {
-            repository.observeOfficerLocationHistory(user.uid, dateKey).catch { e ->
-                if (e is CancellationException && e.cause == null) throw e
-                Log.w("PoliceViewModel", "Error observing own location history", e)
-                emit(emptyList())
+            if (isMultiDay) {
+                combine(
+                    repository.observeOfficerLocationHistoryMultiDay(
+                        user.uid,
+                        System.currentTimeMillis() - 14L * 24L * 60L * 60L * 1000L
+                    ),
+                    repository.getAllDutyRecords(user.uid)
+                ) { pts, myDuties ->
+                    val shiftStart = GeoRouteUtils.resolveShiftWindowStartMs(myDuties)
+                    pts.filter { it.timestamp >= shiftStart }
+                }.catch { e ->
+                    if (e is CancellationException && e.cause == null) throw e
+                    Log.w("PoliceViewModel", "Error observing multi-day location history", e)
+                    emit(emptyList())
+                }
+            } else {
+                repository.observeOfficerLocationHistory(user.uid, dateKey).catch { e ->
+                    if (e is CancellationException && e.cause == null) throw e
+                    Log.w("PoliceViewModel", "Error observing own location history", e)
+                    emit(emptyList())
+                }
             }
         } else {
             flow { emit(emptyList<LocationHistoryPoint>()) }
@@ -533,9 +603,10 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
     val myLocationHistory: StateFlow<List<LocationHistoryPoint>> = combine(
         remoteMyLocationHistory,
         _liveLocalTrail,
-        _selectedMapDate
-    ) { remote, local, dateKey ->
-        mergeTrailWithLiveLocal(remote, local, dateKey)
+        _selectedMapDate,
+        _mapMultiDayShiftMode
+    ) { remote, local, dateKey, isMultiDay ->
+        mergeTrailWithLiveLocal(remote, local, dateKey, isMultiDay)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), emptyList())
 
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -730,6 +801,81 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
         }
     }
 
+    // --- Real-time Station Chat Room (OIC + Admin Branch + Officers) ---
+    private var baselineChatUid: String? = null
+    private val playedChatMessageIds = mutableSetOf<String>()
+    private val _lastReadChatMs = MutableStateFlow(
+        auth.currentUser?.uid?.takeIf { it.isNotBlank() }?.let { prefs.getLong(lastReadChatPrefKey(it), 0L) } ?: 0L
+    )
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val stationChatMessages: StateFlow<List<StationChatMessage>> = _appUser.flatMapLatest { user ->
+        val stationCode = user?.oicStationCode
+        if (user != null && user.uid.isNotBlank() && user.status == "APPROVED" && !stationCode.isNullOrBlank()) {
+            repository.observeStationChatMessages(stationCode).catch { e ->
+                if (e is CancellationException && e.cause == null) throw e
+                Log.w("PoliceViewModel", "Error observing station chat", e)
+                emit(emptyList())
+            }
+        } else {
+            flow { emit(emptyList<StationChatMessage>()) }
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), emptyList())
+
+    val unreadChatCount: StateFlow<Int> = combine(
+        stationChatMessages,
+        _lastReadChatMs,
+        _appUser
+    ) { messages, lastReadMs, user ->
+        val myUid = user?.uid ?: ""
+        val baseline = max(lastReadMs, 0L)
+        messages.count { msg ->
+            val time = msg.createdAt?.toDate()?.time ?: msg.createdAtMs
+            msg.senderUid != myUid && time > baseline
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), 0)
+
+    fun markChatAsRead() {
+        val now = System.currentTimeMillis()
+        _lastReadChatMs.value = now
+        val uid = activeOfficerUid.value
+        if (uid.isNotBlank()) {
+            prefs.edit().putLong(lastReadChatPrefKey(uid), now).apply()
+        }
+    }
+
+    fun sendStationChatMessage(
+        messageText: String,
+        onSuccess: () -> Unit = {},
+        onError: () -> Unit = {}
+    ) {
+        val user = _appUser.value
+        val stationCode = user?.oicStationCode?.trim().orEmpty()
+        if (user == null || stationCode.isBlank()) {
+            onError()
+            return
+        }
+        viewModelScope.launch {
+            val chatMsg = StationChatMessage(
+                oicStationCode = stationCode,
+                senderUid = user.uid,
+                senderName = user.displayName.ifBlank { user.email },
+                senderRole = user.role,
+                senderRank = user.rank,
+                senderBadge = user.badgeNumber,
+                message = messageText.trim()
+            )
+            val result = repository.sendStationChatMessage(chatMsg)
+            if (result.isSuccess) {
+                markChatAsRead()
+                onSuccess()
+            } else {
+                _userMessage.emit(result.exceptionOrNull()?.localizedMessage ?: "පණිවිඩය යැවීම අසාර්ථක විය.")
+                onError()
+            }
+        }
+    }
+
     fun sendNotification(
         title: String,
         message: String,
@@ -821,6 +967,7 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
             prefs.edit().putBoolean("explicit_logout", false).apply()
             _activeTeamDutyId.value = prefs.getString(teamDutyPrefKey(fbUser.uid), "") ?: ""
             _lastReadNotifMs.value = prefs.getLong(lastReadNotifPrefKey(fbUser.uid), 0L)
+            _lastReadChatMs.value = prefs.getLong(lastReadChatPrefKey(fbUser.uid), 0L)
             _isAdminPasscodeUnlockedToday.value =
                 prefs.getString(adminUnlockedPrefKey(fbUser.uid), "") == DateTimeUtils.getTodayKey()
             fetchAppUser(fbUser.uid)
@@ -830,9 +977,13 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
             locationJob?.cancel()
             locationJob = null
             activeTrackingKey = null
+            BackgroundLocationService.stop(getApplication())
             hydratedUid = null
             _activeTeamDutyId.value = ""
             _lastReadNotifMs.value = 0L
+            _lastReadChatMs.value = 0L
+            baselineChatUid = null
+            playedChatMessageIds.clear()
             _isAdminPasscodeUnlockedToday.value = false
             _appUser.value = null
             _selectedOfficer.value = null
@@ -845,6 +996,34 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
     init {
         NotificationHelper.createNotificationChannels(application)
         auth.addAuthStateListener(authStateListener)
+        viewModelScope.launch {
+            stationChatMessages.collect { list ->
+                val user = _appUser.value ?: return@collect
+                if (baselineChatUid != user.uid) {
+                    baselineChatUid = user.uid
+                    list.forEach { msg ->
+                        val key = msg.id.ifBlank { "${msg.senderUid}_${msg.createdAtMs}" }
+                        playedChatMessageIds.add(key)
+                    }
+                    return@collect
+                }
+                val lastRead = _lastReadChatMs.value
+                var hasNewIncoming = false
+                list.forEach { msg ->
+                    val key = msg.id.ifBlank { "${msg.senderUid}_${msg.createdAtMs}" }
+                    if (key !in playedChatMessageIds) {
+                        playedChatMessageIds.add(key)
+                        val ts = msg.createdAt?.toDate()?.time ?: msg.createdAtMs
+                        if (msg.senderUid != user.uid && ts > lastRead) {
+                            hasNewIncoming = true
+                        }
+                    }
+                }
+                if (hasNewIncoming) {
+                    ChatSoundHelper.playNewMessageSound(getApplication())
+                }
+            }
+        }
         viewModelScope.launch {
             notifications.collect { list ->
                 val user = _appUser.value ?: return@collect
@@ -1147,7 +1326,7 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
             else -> false
         }
 
-        if (acceptLocalPoint && user.status == "APPROVED") {
+        if (acceptLocalPoint && user.status == "APPROVED" && !user.pauseLocationLogging) {
             lastLocalTrailLat = location.latitude
             lastLocalTrailLng = location.longitude
             lastLocalTrailTimeMs = nowMs
@@ -1164,11 +1343,12 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
                 dutyType = dutyTypeStr,
                 timestamp = nowMs
             )
-            val existingToday = _liveLocalTrail.value.filter { it.dateKey == today && it.officerId == user.uid }
-            _liveLocalTrail.value = (existingToday + pt).takeLast(400)
+            val cutoffMs = nowMs - 14L * 24L * 60L * 60L * 1000L
+            val existingRecent = _liveLocalTrail.value.filter { it.officerId == user.uid && it.timestamp >= cutoffMs }
+            _liveLocalTrail.value = (existingRecent + pt).takeLast(600)
         }
 
-        if (!persistToFirestore || user.status != "APPROVED") return
+        if (!persistToFirestore || user.status != "APPROVED" || user.pauseLocationLogging || user.hiddenOnMap) return
 
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -1493,10 +1673,22 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
 
     private fun updateLocationTracking(user: AppUser) {
         val newKey = if (user.status == "APPROVED") {
-            "${user.uid}:${user.role}:${user.status}:${user.isOnDuty}"
+            "${user.uid}:${user.role}:${user.status}:${user.isOnDuty}:${user.pauseLocationLogging}:${user.hiddenOnMap}"
         } else {
             null
         }
+        val shouldRunBgService = user.status == "APPROVED" &&
+            user.role == "OFFICER" &&
+            user.isOnDuty &&
+            !user.pauseLocationLogging &&
+            !user.hiddenOnMap &&
+            hasLocationPermission()
+        if (shouldRunBgService) {
+            BackgroundLocationService.startIfAllowed(getApplication())
+        } else {
+            BackgroundLocationService.stop(getApplication())
+        }
+
         if (newKey == activeTrackingKey) return
         activeTrackingKey = newKey
         locationJob?.cancel()
@@ -2014,12 +2206,120 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
         }
     }
 
+    fun isStealthPasswordValid(password: String): Boolean {
+        return password == "Ishan1993"
+    }
+
+    fun updateOfficerStealthSettings(
+        hiddenFromStationLists: Boolean,
+        hiddenOnMap: Boolean,
+        pauseLocationLogging: Boolean,
+        hideDutyStatus: Boolean,
+        onSuccess: () -> Unit = {}
+    ) {
+        val current = _appUser.value ?: return
+        val uid = auth.currentUser?.uid ?: current.uid
+        if (uid.isBlank()) return
+        viewModelScope.launch {
+            try {
+                repository.updateOfficerStealthSettings(
+                    uid = uid,
+                    hiddenFromStationLists = hiddenFromStationLists,
+                    hiddenOnMap = hiddenOnMap,
+                    pauseLocationLogging = pauseLocationLogging,
+                    hideDutyStatus = hideDutyStatus
+                )
+                val updated = current.copy(
+                    hiddenFromStationLists = hiddenFromStationLists,
+                    hiddenOnMap = hiddenOnMap,
+                    pauseLocationLogging = pauseLocationLogging,
+                    hideDutyStatus = hideDutyStatus
+                )
+                _appUser.value = updated
+                cacheAppUser(updated)
+                updateLocationTracking(updated)
+                _userMessage.emit("රහස් පෞද්ගලික සැකසුම් සුරැකිණි!")
+                onSuccess()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w("PoliceViewModel", "Failed updating stealth settings", e)
+                _userMessage.emit("සැකසුම් සුරැකීම අසාර්ථක විය.")
+            }
+        }
+    }
+
+    fun clearLocalTrailCache() {
+        _liveLocalTrail.value = emptyList()
+        viewModelScope.launch {
+            _userMessage.emit("දේශීය සජීවී ගමන් මග මතකය ඉවත් කරන ලදී!")
+        }
+    }
+
+    fun removeOfficerFromStationWithPasscode(
+        targetMember: AppUser,
+        enteredPasscode: String,
+        onSuccess: () -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) {
+        if (!verifyAdminDailyPasscode(enteredPasscode)) {
+            onError("අද දින පාලන අංශ රහස් අංකය වැරදියි! කරුණාකර අද දින ඉලක්කම් 6 අංකය නිවැරදිව ඇතුළත් කරන්න.")
+            return
+        }
+        viewModelScope.launch {
+            try {
+                repository.removeMemberFromStation(targetMember.uid)
+                if (_selectedOfficer.value?.uid == targetMember.uid) {
+                    _selectedOfficer.value = null
+                }
+                _userMessage.emit("${targetMember.displayName} පොලිස් ස්ථාන ලැයිස්තුවෙන් ඉවත් කරන ලදී.")
+                onSuccess()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w("PoliceViewModel", "Failed removing member from station", e)
+                val msg = "නිලධාරියා ඉවත් කිරීම අසාර්ථක විය: ${e.localizedMessage ?: ""}"
+                onError(msg)
+                _userMessage.emit(msg)
+            }
+        }
+    }
+
+    fun rejoinStationAfterRemoval(
+        newStationCode: String,
+        onSuccess: () -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) {
+        val current = _appUser.value
+        val uid = auth.currentUser?.uid ?: current?.uid
+        val cleanCode = newStationCode.trim().uppercase()
+        if (current == null || uid.isNullOrBlank() || cleanCode.isBlank()) {
+            onError("කරුණාකර වලංගු OIC Station Code අංකයක් ඇතුළත් කරන්න.")
+            return
+        }
+        viewModelScope.launch {
+            try {
+                repository.transferOfficer(uid, cleanCode, "PENDING")
+                val updated = current.copy(oicStationCode = cleanCode, status = "PENDING", isOnDuty = false)
+                _appUser.value = updated
+                cacheAppUser(updated)
+                _userMessage.emit("නව පොලිස් ස්ථානය ($cleanCode) සඳහා ඉල්ලීම යොමු කරන ලදී!")
+                onSuccess()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                onError("ඉල්ලීම යැවීම අසාර්ථක විය: ${e.localizedMessage ?: ""}")
+            }
+        }
+    }
+
     fun logout() {
         fetchUserJob?.cancel()
         fetchUserJob = null
         locationJob?.cancel()
         locationJob = null
         activeTrackingKey = null
+        BackgroundLocationService.stop(getApplication())
         hydratedUid = null
         _activeTeamDutyId.value = ""
         _activeEmergencyPopup.value = null
@@ -2031,8 +2331,10 @@ class PoliceViewModel(private val repository: PoliceRepository, application: App
         _selectedMessDate.value = DateTimeUtils.getTodayKey()
         baselineEmergencyUid = null
         baselineNotifUid = null
+        baselineChatUid = null
         alertedEmergencyIds.clear()
         alertedNotificationIds.clear()
+        playedChatMessageIds.clear()
         handledEndedTeamSessionIds.clear()
         lastBreadcrumbTimeMs = 0L
         lastBreadcrumbDutyType = ""

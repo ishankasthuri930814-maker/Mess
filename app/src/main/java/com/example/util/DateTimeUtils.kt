@@ -56,6 +56,18 @@ object DateTimeUtils {
         return "${hours}h ${minutes}m"
     }
 
+    fun formatSinhalaDuration(totalMinutes: Long): String {
+        val safeMins = totalMinutes.coerceAtLeast(0L)
+        val days = safeMins / (60L * 24L)
+        val hours = (safeMins % (60L * 24L)) / 60L
+        val mins = safeMins % 60L
+        return buildString {
+            if (days > 0L) append("දින $days ")
+            if (hours > 0L) append("පැය $hours ")
+            if (mins > 0L || (days == 0L && hours == 0L)) append("විනාඩි $mins")
+        }.trim()
+    }
+
     fun getDayOfWeekSinhala(timestamp: Long): String {
         val cal = java.util.Calendar.getInstance().apply { timeInMillis = timestamp }
         return when (cal.get(java.util.Calendar.DAY_OF_WEEK)) {

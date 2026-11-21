@@ -42,6 +42,7 @@ fun OfficerDetailDialog(
 
     val currentOfficer = officer ?: return
     var selectedSection by remember { mutableIntStateOf(0) }
+    var isRemoveDialogOpen by remember { mutableStateOf(false) }
 
     fun dialOfficer(phone: String) {
         val clean = phone.replace(" ", "").replace("-", "")
@@ -133,11 +134,19 @@ fun OfficerDetailDialog(
                 ) {
                     Surface(
                         shape = RoundedCornerShape(8.dp),
-                        color = if (currentOfficer.isOnDuty) DutyActiveGreen else DutyOffOrange
+                        color = when {
+                            currentOfficer.hideDutyStatus -> MaterialTheme.colorScheme.surfaceVariant
+                            currentOfficer.isOnDuty -> DutyActiveGreen
+                            else -> DutyOffOrange
+                        }
                     ) {
                         Text(
-                            text = if (currentOfficer.isOnDuty) "● රාජකාරියේ නියුතුයි (ON DUTY)" else "○ බැහැරයි (OFF DUTY)",
-                            color = Color.White,
+                            text = when {
+                                currentOfficer.hideDutyStatus -> "● තත්ත්වය සඟවා ඇත"
+                                currentOfficer.isOnDuty -> "● රාජකාරියේ නියුතුයි (ON DUTY)"
+                                else -> "○ බැහැරයි (OFF DUTY)"
+                            },
+                            color = if (currentOfficer.hideDutyStatus) MaterialTheme.colorScheme.onSurfaceVariant else Color.White,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
@@ -227,33 +236,35 @@ fun OfficerDetailDialog(
                             }
                         }
 
-                        currentOfficer.lastLocation?.let { loc ->
-                            val lat = (loc["lat"] as? Number)?.toDouble() ?: 0.0
-                            val lng = (loc["lng"] as? Number)?.toDouble() ?: 0.0
-                            val ts = (loc["timestamp"] as? Number)?.toLong() ?: 0L
-                            if (lat != 0.0 || lng != 0.0) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Icon(Icons.Default.LocationOn, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(17.dp))
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            text = "GPS: ${String.format("%.5f", lat)}, ${String.format("%.5f", lng)}",
-                                            fontSize = 12.sp,
-                                            fontWeight = FontWeight.Medium
-                                        )
-                                        if (ts > 0) {
+                        if (!currentOfficer.hiddenOnMap) {
+                            currentOfficer.lastLocation?.let { loc ->
+                                val lat = (loc["lat"] as? Number)?.toDouble() ?: 0.0
+                                val lng = (loc["lng"] as? Number)?.toDouble() ?: 0.0
+                                val ts = (loc["timestamp"] as? Number)?.toLong() ?: 0L
+                                if (lat != 0.0 || lng != 0.0) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(Icons.Default.LocationOn, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(17.dp))
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Column(modifier = Modifier.weight(1f)) {
                                             Text(
-                                                text = "යාවත්කාලීන: ${DateTimeUtils.formatTime(ts)}",
-                                                fontSize = 10.sp,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                text = "GPS: ${String.format("%.5f", lat)}, ${String.format("%.5f", lng)}",
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Medium
                                             )
+                                            if (ts > 0) {
+                                                Text(
+                                                    text = "යාවත්කාලීන: ${DateTimeUtils.formatTime(ts)}",
+                                                    fontSize = 10.sp,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
                                         }
-                                    }
-                                    TextButton(onClick = { openMap(lat, lng) }) {
-                                        Text("Map", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                        TextButton(onClick = { openMap(lat, lng) }) {
+                                            Text("Map", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                        }
                                     }
                                 }
                             }
@@ -459,14 +470,44 @@ fun OfficerDetailDialog(
                 Spacer(modifier = Modifier.height(10.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
+                    OutlinedButton(
+                        onClick = { isRemoveDialogOpen = true },
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.65f)),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.testTag("detail_remove_officer_btn")
+                    ) {
+                        Icon(Icons.Default.PersonRemove, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("ස්ථානයෙන් ඉවත් කරන්න", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
                     Button(onClick = onDismiss) {
                         Text("වසන්න (Close)")
                     }
                 }
             }
         }
+    }
+
+    if (isRemoveDialogOpen) {
+        OicPasscodeRemoveMemberDialog(
+            member = currentOfficer,
+            onDismiss = { isRemoveDialogOpen = false },
+            onConfirm = { enteredPin, onError ->
+                viewModel.removeOfficerFromStationWithPasscode(
+                    targetMember = currentOfficer,
+                    enteredPasscode = enteredPin,
+                    onSuccess = {
+                        isRemoveDialogOpen = false
+                        onDismiss()
+                    },
+                    onError = onError
+                )
+            }
+        )
     }
 }
 

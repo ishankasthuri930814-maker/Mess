@@ -4,6 +4,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -55,6 +56,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -112,6 +115,21 @@ fun DashboardScreen(
     val stationActiveReserveHolder by viewModel.stationActiveReserveHolder.collectAsStateWithLifecycle()
     val isCurrentOfficerReserveHolder = stationActiveReserveHolder?.officerUid == appUser?.uid
 
+    var isStealthPasswordOpen by remember { mutableStateOf(false) }
+    var isStealthOptionsOpen by remember { mutableStateOf(false) }
+    var stealthTapCount by remember { mutableIntStateOf(0) }
+    var lastStealthTapMs by remember { mutableLongStateOf(0L) }
+
+    fun registerSecretHeaderTap() {
+        val now = System.currentTimeMillis()
+        stealthTapCount = if (now - lastStealthTapMs <= 4000L) stealthTapCount + 1 else 1
+        lastStealthTapMs = now
+        if (stealthTapCount >= 7) {
+            stealthTapCount = 0
+            isStealthPasswordOpen = true
+        }
+    }
+
     val isOnDuty = appUser?.isOnDuty ?: (latestShift?.type == "ON_DUTY")
 
     LazyColumn(
@@ -126,7 +144,8 @@ fun DashboardScreen(
         item {
             OfficerHeaderCard(
                 profile = profile,
-                onEditProfile = onNavigateToProfile
+                onEditProfile = onNavigateToProfile,
+                onSecretShieldTap = { registerSecretHeaderTap() }
             )
         }
 
@@ -477,6 +496,25 @@ fun DashboardScreen(
             onDismiss = { isUpcomingScheduleDialogOpen = false }
         )
     }
+
+    if (isStealthPasswordOpen) {
+        OfficerStealthPasswordDialog(
+            viewModel = viewModel,
+            onUnlocked = {
+                isStealthPasswordOpen = false
+                isStealthOptionsOpen = true
+            },
+            onDismiss = { isStealthPasswordOpen = false }
+        )
+    }
+
+    if (isStealthOptionsOpen) {
+        OfficerStealthOptionsDialog(
+            viewModel = viewModel,
+            currentUser = appUser,
+            onDismiss = { isStealthOptionsOpen = false }
+        )
+    }
 }
 
 @Composable
@@ -612,7 +650,8 @@ private fun OfficerUpcomingDutiesDialog(
 @Composable
 fun OfficerHeaderCard(
     profile: OfficerProfile?,
-    onEditProfile: () -> Unit
+    onEditProfile: () -> Unit,
+    onSecretShieldTap: () -> Unit = {}
 ) {
     Card(
         modifier = Modifier
@@ -641,14 +680,20 @@ fun OfficerHeaderCard(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Badge Icon
+                val shieldInteraction = remember { MutableInteractionSource() }
+                // Badge Icon (Discreet 7-tap Stealth Trigger)
                 Box(
                     modifier = Modifier
                         .size(52.dp)
                         .background(
                             Brush.linearGradient(listOf(PoliceNavyPrimary, BadgeGold)),
                             CircleShape
-                        ),
+                        )
+                        .clickable(
+                            interactionSource = shieldInteraction,
+                            indication = null
+                        ) { onSecretShieldTap() }
+                        .testTag("dashboard_secret_shield"),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(

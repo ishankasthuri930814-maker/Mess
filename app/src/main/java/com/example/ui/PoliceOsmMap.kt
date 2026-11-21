@@ -137,6 +137,8 @@ fun PoliceLiveMapView(
     activeRouteState: ActiveRouteState?,
     selectedDateKey: String,
     isOicView: Boolean,
+    isMultiDayShiftMode: Boolean = true,
+    onToggleMultiDayShiftMode: (Boolean) -> Unit = {},
     onSelectDate: (String) -> Unit,
     onNavigateToTarget: (MapNavigationTarget) -> Unit,
     onClearRoute: () -> Unit,
@@ -229,9 +231,11 @@ fun PoliceLiveMapView(
         }
     }
 
-    // Filter visible officers
-    val approvedOfficers = remember(officers) {
-        officers.filter { it.status == "APPROVED" }
+    // Filter visible officers (OIC view respects stealth controls)
+    val approvedOfficers = remember(officers, isOicView) {
+        officers.filter {
+            it.status == "APPROVED" && (!isOicView || (!it.hiddenOnMap && !it.hiddenFromStationLists))
+        }
     }
     val visibleOfficers = remember(approvedOfficers, filterMode, focusedOfficerUid) {
         if (focusedOfficerUid != null) {
@@ -397,17 +401,18 @@ fun PoliceLiveMapView(
 
                 view.overlays.clear()
 
-                // 1. Travel Paths (Polylines) & Stay Locations (Dwell circles + markers)
+                // 1. Travel Paths (Smoothed Polylines) & Stay Locations (Dwell circles + markers)
                 if (showTrailsAndStays) {
                     groupedHistory.forEach { (officerId, pts) ->
                         val sortedPts = pts.filter { it.lat != 0.0 || it.lng != 0.0 }.sortedBy { it.timestamp }
+                        val smoothedCoords = GeoRouteUtils.filterAndSmoothTrail(sortedPts)
                         val trailColor = MapMarkerBitmapHelper.getTrailColorForOfficer(officerId)
 
-                        if (sortedPts.size >= 2) {
+                        if (smoothedCoords.size >= 2) {
                             val polyline = Polyline(view).apply {
-                                setPoints(sortedPts.map { GeoPoint(it.lat, it.lng) })
+                                setPoints(smoothedCoords.map { GeoPoint(it.first, it.second) })
                                 outlinePaint.color = trailColor
-                                outlinePaint.strokeWidth = if (focusedOfficerUid == officerId) 11f else 7f
+                                outlinePaint.strokeWidth = if (focusedOfficerUid == officerId) 11f else 7.5f
                                 outlinePaint.strokeCap = Paint.Cap.ROUND
                                 outlinePaint.strokeJoin = Paint.Join.ROUND
                                 title = "${sortedPts.first().officerName.ifBlank { "Officer" }} - ගමන් මාර්ගය"
@@ -415,23 +420,48 @@ fun PoliceLiveMapView(
                             view.overlays.add(polyline)
                         }
 
-                        // Stay / Dwell points
+                        // Stay / Dwell points (distinct vibrant highlight when >= 20 min)
                         val stays = staysByOfficer[officerId].orEmpty()
                         stays.forEachIndexed { idx, stay ->
+                            val isLongStay = stay.durationMinutes >= GeoRouteUtils.LONG_STAY_THRESHOLD_MINUTES
                             val zoneCircle = Polygon(view).apply {
-                                points = Polygon.pointsAsCircle(GeoPoint(stay.centerLat, stay.centerLng), 48.0)
-                                fillPaint.color = android.graphics.Color.argb(40, 109, 40, 217)
-                                outlinePaint.color = android.graphics.Color.argb(170, 109, 40, 217)
-                                outlinePaint.strokeWidth = 2.5f
+                                points = Polygon.pointsAsCircle(
+                                    GeoPoint(stay.centerLat, stay.centerLng),
+                                    if (isLongStay) 60.0 else 46.0
+                                )
+                                fillPaint.color = if (isLongStay) {
+                                    android.graphics.Color.argb(65, 234, 88, 12)
+                                } else {
+                                    android.graphics.Color.argb(40, 109, 40, 217)
+                                }
+                                outlinePaint.color = if (isLongStay) {
+                                    android.graphics.Color.argb(225, 220, 38, 38)
+                                } else {
+                                    android.graphics.Color.argb(170, 109, 40, 217)
+                                }
+                                outlinePaint.strokeWidth = if (isLongStay) 3.5f else 2.5f
                             }
                             view.overlays.add(zoneCircle)
 
-                            val stayLabel = if (stay.isOffDutySpot) "OFF" else "${stay.durationMinutes}m"
+                            val stayLabel = when {
+                                stay.isOffDutySpot -> "OFF"
+                                isLongStay -> "⏱ ${DateTimeUtils.formatSinhalaDuration(stay.durationMinutes)}"
+                                else -> "${stay.durationMinutes}m"
+                            }
                             val stayMarker = Marker(view).apply {
                                 position = GeoPoint(stay.centerLat, stay.centerLng)
                                 setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
-                                icon = MapMarkerBitmapHelper.createStayPointDrawable(context, stayLabel)
-                                title = "රැඳී සිටි ස්ථානය #${idx + 1}"
+                                icon = MapMarkerBitmapHelper.createStayPointDrawable(
+                                    context = context,
+                                    durationLabel = stayLabel,
+                                    isLongStay = isLongStay,
+                                    isOffDutySpot = stay.isOffDutySpot
+                                )
+                                title = if (isLongStay) {
+                                    "දීර්ඝ නැවතුම #${idx + 1} (${DateTimeUtils.formatSinhalaDuration(stay.durationMinutes)})"
+                                } else {
+                                    "රැඳී සිටි ස්ථානය #${idx + 1}"
+                                }
                                 setOnMarkerClickListener { _, _ ->
                                     selectedOverlay = SelectedMapOverlay.StaySpotPin(stay)
                                     true
@@ -607,10 +637,37 @@ fun PoliceLiveMapView(
                     }
                 }
 
-                // Date Selector for Trails & Stay Spots
+                // Continuous Multi-Day Shift Trail Mode Toggle
                 Surface(
                     shape = RoundedCornerShape(16.dp),
-                    color = BadgeGoldBright,
+                    color = if (isMultiDayShiftMode) Color(0xFF0F766E) else Color.White.copy(alpha = 0.94f),
+                    shadowElevation = 3.dp,
+                    modifier = Modifier.clickable { onToggleMultiDayShiftMode(!isMultiDayShiftMode) }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Default.AllInclusive,
+                            contentDescription = null,
+                            modifier = Modifier.size(14.dp),
+                            tint = if (isMultiDayShiftMode) Color.White else PoliceNavyDark
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "සම්පූර්ණ මුරය (Shift)",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isMultiDayShiftMode) Color.White else PoliceNavyDark
+                        )
+                    }
+                }
+
+                // Date Selector for Single-Day Trails & Stay Spots
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = if (!isMultiDayShiftMode) BadgeGoldBright else Color.White.copy(alpha = 0.94f),
                     shadowElevation = 3.dp,
                     modifier = Modifier.clickable { openMapDatePicker() }
                 ) {
@@ -621,7 +678,13 @@ fun PoliceLiveMapView(
                         Icon(Icons.Default.CalendarMonth, contentDescription = null, modifier = Modifier.size(14.dp), tint = PoliceNavyDark)
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
-                            text = if (selectedDateKey == DateTimeUtils.getTodayKey()) "අද මාර්ග" else selectedDateKey,
+                            text = if (!isMultiDayShiftMode && selectedDateKey == DateTimeUtils.getTodayKey()) {
+                                "අද දිනය"
+                            } else if (!isMultiDayShiftMode) {
+                                "දිනය: $selectedDateKey"
+                            } else {
+                                "දිනය තෝරන්න"
+                            },
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
                             color = PoliceNavyDark
@@ -997,8 +1060,13 @@ fun PoliceLiveMapView(
                                     )
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Column(modifier = Modifier.weight(1f)) {
+                                        val dutyLabelText = if (isOicView && officer.hideDutyStatus) {
+                                            officer.displayName
+                                        } else {
+                                            "${officer.displayName} (${if (officer.isOnDuty) "ON DUTY" else "OFF DUTY අවසන් ස්ථානය"})"
+                                        }
                                         Text(
-                                            text = "${officer.displayName} (${if (officer.isOnDuty) "ON DUTY" else "OFF DUTY අවසන් ස්ථානය"})",
+                                            text = dutyLabelText,
                                             fontWeight = FontWeight.Bold,
                                             fontSize = 13.sp
                                         )
@@ -1081,7 +1149,12 @@ fun PoliceLiveMapView(
 
                     is SelectedMapOverlay.StaySpotPin -> {
                         val stay = sel.stay
-                        val stayAccentColor = if (MaterialTheme.colorScheme.isDark) Color(0xFFC4B5FD) else Color(0xFF6D28D9)
+                        val isLongStay = stay.durationMinutes >= GeoRouteUtils.LONG_STAY_THRESHOLD_MINUTES
+                        val stayAccentColor = when {
+                            isLongStay -> Color(0xFFEA580C)
+                            MaterialTheme.colorScheme.isDark -> Color(0xFFC4B5FD)
+                            else -> Color(0xFF6D28D9)
+                        }
                         Card(
                             modifier = Modifier.fillMaxWidth(),
                             shape = RoundedCornerShape(16.dp),
@@ -1092,19 +1165,39 @@ fun PoliceLiveMapView(
                                 modifier = Modifier.padding(12.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Icon(Icons.Default.LocationOn, contentDescription = null, tint = stayAccentColor, modifier = Modifier.size(28.dp))
+                                Icon(Icons.Default.LocationOn, contentDescription = null, tint = stayAccentColor, modifier = Modifier.size(30.dp))
                                 Spacer(modifier = Modifier.width(10.dp))
                                 Column(modifier = Modifier.weight(1f)) {
+                                    if (isLongStay) {
+                                        Surface(
+                                            shape = RoundedCornerShape(6.dp),
+                                            color = Color(0xFFEA580C).copy(alpha = 0.16f)
+                                        ) {
+                                            Text(
+                                                text = "⚠️ විනාඩි 20+ දීර්ඝ නැවතුම",
+                                                color = Color(0xFFEA580C),
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.ExtraBold,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.height(3.dp))
+                                    }
                                     Text(
                                         text = "${stay.officerName.ifBlank { "නිලධාරියා" }} - ${if (stay.isOffDutySpot) "අවසන් OFF-DUTY ස්ථානය" else "රැඳී සිටි ස්ථානය"}",
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 13.sp
                                     )
                                     Text(
-                                        text = "කාලය: ${DateTimeUtils.formatTime(stay.arrivalMs)} - ${DateTimeUtils.formatTime(stay.departureMs)} (විනාඩි ${stay.durationMinutes})",
+                                        text = "වේලාව: ${DateTimeUtils.formatTime(stay.arrivalMs)} - ${DateTimeUtils.formatTime(stay.departureMs)}",
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Text(
+                                        text = "රැඳී සිටි කාලය: ${DateTimeUtils.formatSinhalaDuration(stay.durationMinutes)}",
                                         fontSize = 12.sp,
                                         color = stayAccentColor,
-                                        fontWeight = FontWeight.SemiBold
+                                        fontWeight = FontWeight.Bold
                                     )
                                 }
                                 IconButton(onClick = { selectedOverlay = null }) {

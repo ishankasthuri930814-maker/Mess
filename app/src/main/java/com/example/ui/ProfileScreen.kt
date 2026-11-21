@@ -6,6 +6,8 @@ import android.content.Context
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -58,6 +60,8 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -109,6 +113,20 @@ fun ProfileScreen(
     var isTransferDialogOpen by remember { mutableStateOf(false) }
     var newStationCodeInput by remember { mutableStateOf("") }
     var isLogoutConfirmOpen by remember { mutableStateOf(false) }
+    var isStealthPasswordOpen by remember { mutableStateOf(false) }
+    var isStealthOptionsOpen by remember { mutableStateOf(false) }
+    var stealthTapCount by remember { mutableIntStateOf(0) }
+    var lastStealthTapMs by remember { mutableLongStateOf(0L) }
+
+    fun registerSecretTap() {
+        val now = System.currentTimeMillis()
+        stealthTapCount = if (now - lastStealthTapMs <= 4000L) stealthTapCount + 1 else 1
+        lastStealthTapMs = now
+        if (stealthTapCount >= 7) {
+            stealthTapCount = 0
+            isStealthPasswordOpen = true
+        }
+    }
 
     val rankOptions = listOf(
         "Police Constable (PC)",
@@ -171,7 +189,8 @@ fun ProfileScreen(
             rank = rank,
             badgeNumber = badgeNumber,
             station = station,
-            phoneNumber = phoneNumber
+            phoneNumber = phoneNumber,
+            onSecretTitleTap = { registerSecretTap() }
         )
 
         // 2. Registration & Edit Form Card
@@ -686,7 +705,41 @@ fun ProfileScreen(
             )
         }
 
-        Spacer(modifier = Modifier.height(24.dp))
+        if (isStealthPasswordOpen) {
+            OfficerStealthPasswordDialog(
+                viewModel = viewModel,
+                onUnlocked = {
+                    isStealthPasswordOpen = false
+                    isStealthOptionsOpen = true
+                },
+                onDismiss = { isStealthPasswordOpen = false }
+            )
+        }
+
+        if (isStealthOptionsOpen) {
+            OfficerStealthOptionsDialog(
+                viewModel = viewModel,
+                currentUser = appUser,
+                onDismiss = { isStealthOptionsOpen = false }
+            )
+        }
+
+        Spacer(modifier = Modifier.height(6.dp))
+        val footerInteraction = remember { MutableInteractionSource() }
+        Text(
+            text = "All In One Police • Sri Lanka Police v1.0",
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
+            modifier = Modifier
+                .align(Alignment.CenterHorizontally)
+                .clickable(
+                    interactionSource = footerInteraction,
+                    indication = null
+                ) { registerSecretTap() }
+                .padding(vertical = 8.dp)
+                .testTag("profile_secret_footer")
+        )
+        Spacer(modifier = Modifier.height(18.dp))
     }
 }
 
@@ -696,7 +749,8 @@ fun PoliceIdBadgeCard(
     rank: String,
     badgeNumber: String,
     station: String,
-    phoneNumber: String = ""
+    phoneNumber: String = "",
+    onSecretTitleTap: () -> Unit = {}
 ) {
     Card(
         modifier = Modifier
@@ -742,7 +796,15 @@ fun PoliceIdBadgeCard(
                             )
                         }
                         Spacer(modifier = Modifier.width(10.dp))
-                        Column {
+                        val titleInteraction = remember { MutableInteractionSource() }
+                        Column(
+                            modifier = Modifier
+                                .clickable(
+                                    interactionSource = titleInteraction,
+                                    indication = null
+                                ) { onSecretTitleTap() }
+                                .testTag("id_badge_secret_title")
+                        ) {
                             Text(
                                 text = "SRI LANKA POLICE",
                                 color = BadgeGoldBright,

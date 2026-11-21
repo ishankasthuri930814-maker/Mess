@@ -100,6 +100,115 @@ fun NotificationBellButton(
 }
 
 @Composable
+fun LatestInAppNoticeBanner(
+    notifications: List<AppNotification>,
+    unreadCount: Int,
+    onOpenInbox: () -> Unit,
+    onSendNotice: (() -> Unit)? = null,
+    modifier: Modifier = Modifier
+) {
+    val latest = notifications.firstOrNull() ?: return
+    val isUrgent = latest.priority == "URGENT"
+    val timeMs = latest.createdAt?.toDate()?.time ?: latest.createdAtMs
+
+    Card(
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("in_app_notice_banner"),
+        onClick = onOpenInbox,
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (isUrgent) {
+                MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.85f)
+            } else {
+                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
+            }
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = if (isUrgent) MaterialTheme.colorScheme.error else PoliceNavyPrimary,
+                modifier = Modifier.size(36.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = if (isUrgent) Icons.Default.PriorityHigh else Icons.Default.Campaign,
+                        contentDescription = "Notice",
+                        tint = Color.White,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.width(10.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = if (isUrgent) "හදිසි දැනුම්දීම" else "පොලිස් දැනුම්දීම",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = if (isUrgent) MaterialTheme.colorScheme.error else PoliceThemeColors.navyText
+                    )
+                    if (unreadCount > 0) {
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = MaterialTheme.colorScheme.error
+                        ) {
+                            Text(
+                                text = "නව $unreadCount",
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White,
+                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                            )
+                        }
+                    }
+                    if (timeMs > 0L) {
+                        Text(
+                            text = DateTimeUtils.formatTime(timeMs),
+                            fontSize = 10.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                Text(
+                    text = latest.title,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1
+                )
+                Text(
+                    text = latest.message,
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    lineHeight = 15.sp
+                )
+            }
+            if (onSendNotice != null) {
+                Spacer(modifier = Modifier.width(6.dp))
+                TextButton(
+                    onClick = onSendNotice,
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                ) {
+                    Text("යවන්න", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    }
+}
+
+@Composable
 fun NotificationsInboxDialog(
     viewModel: PoliceViewModel,
     isOic: Boolean,

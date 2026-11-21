@@ -71,6 +71,9 @@ fun AdminBranchDashboardScreen(
     val isPasscodeUnlocked by viewModel.isAdminPasscodeUnlockedToday.collectAsStateWithLifecycle()
     val emergencyAlerts by viewModel.nearbyEmergencyAlerts.collectAsStateWithLifecycle()
     val myLocation by viewModel.myCurrentLocation.collectAsStateWithLifecycle()
+    val notifications by viewModel.notifications.collectAsStateWithLifecycle()
+    val unreadNotifCount by viewModel.unreadNotificationCount.collectAsStateWithLifecycle()
+    val unreadChatCount by viewModel.unreadChatCount.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
 
     var selectedTab by remember { mutableIntStateOf(0) }
@@ -79,6 +82,9 @@ fun AdminBranchDashboardScreen(
     var isLogoutConfirmOpen by remember { mutableStateOf(false) }
     var isDirectoryOpen by remember { mutableStateOf(false) }
     var isSendSosDialogOpen by remember { mutableStateOf(false) }
+    var isChatDialogOpen by remember { mutableStateOf(false) }
+    var isNotificationsDialogOpen by remember { mutableStateOf(false) }
+    var isSendNotificationDialogOpen by remember { mutableStateOf(false) }
 
     // Duty Assignment Form State
     var assigningOfficer by remember { mutableStateOf<AppUser?>(null) }
@@ -89,7 +95,9 @@ fun AdminBranchDashboardScreen(
     var selectedMessMonth by remember { mutableStateOf(DateTimeUtils.getCurrentMonthKey()) }
 
     val approvedOfficers = remember(subordinates) {
-        subordinates.filter { it.status == "APPROVED" && it.role == "OFFICER" }
+        subordinates.filter {
+            it.status == "APPROVED" && it.role == "OFFICER" && !it.hiddenFromStationLists
+        }
     }
 
     LaunchedEffect(Unit) {
@@ -372,6 +380,26 @@ fun AdminBranchDashboardScreen(
                             tint = Color(0xFFFCA5A5)
                         )
                     }
+                    ChatTopBarButton(
+                        unreadCount = unreadChatCount,
+                        tint = Color(0xFFFCD34D),
+                        onClick = { isChatDialogOpen = true }
+                    )
+                    IconButton(
+                        onClick = { isSendNotificationDialogOpen = true },
+                        modifier = Modifier.testTag("admin_send_notice_btn")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Campaign,
+                            contentDescription = "Send Notification",
+                            tint = Color(0xFFFCD34D)
+                        )
+                    }
+                    NotificationBellButton(
+                        unreadCount = unreadNotifCount,
+                        tint = Color(0xFFFCD34D),
+                        onClick = { isNotificationsDialogOpen = true }
+                    )
                     IconButton(
                         onClick = { isDirectoryOpen = true },
                         modifier = Modifier.testTag("admin_dir_btn")
@@ -411,6 +439,14 @@ fun AdminBranchDashboardScreen(
                     modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
                 )
             }
+
+            LatestInAppNoticeBanner(
+                notifications = notifications,
+                unreadCount = unreadNotifCount,
+                onOpenInbox = { isNotificationsDialogOpen = true },
+                onSendNotice = { isSendNotificationDialogOpen = true },
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp)
+            )
 
             // Quick Metrics Header
             Row(
@@ -621,6 +657,30 @@ fun AdminBranchDashboardScreen(
         SendEmergencySosDialog(
             viewModel = viewModel,
             onDismiss = { isSendSosDialogOpen = false }
+        )
+    }
+
+    if (isNotificationsDialogOpen) {
+        NotificationsInboxDialog(
+            viewModel = viewModel,
+            isOic = true,
+            onOpenSendDialog = { isSendNotificationDialogOpen = true },
+            onDismiss = { isNotificationsDialogOpen = false }
+        )
+    }
+
+    if (isSendNotificationDialogOpen) {
+        SendNotificationDialog(
+            viewModel = viewModel,
+            subordinates = approvedOfficers,
+            onDismiss = { isSendNotificationDialogOpen = false }
+        )
+    }
+
+    if (isChatDialogOpen) {
+        StationChatDialog(
+            viewModel = viewModel,
+            onDismiss = { isChatDialogOpen = false }
         )
     }
 }
